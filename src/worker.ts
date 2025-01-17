@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { handleOAuthStart, handleOAuthCallback, getAccessToken } from './handlers/oauth';
-import { LightroomClient } from './lib/adobe-client';
 import { handleLightroomRequest } from './handlers/lightroom';
 
 interface Env {
@@ -21,14 +20,6 @@ async function getAdobeCredentials(env: Env) {
       env['lightroom-worker-ADOBE_API_CREDENTIALS'].get('client_id'),
       env['lightroom-worker-ADOBE_API_CREDENTIALS'].get('client_secret')
     ]);
-
-    console.log('Retrieved credentials:', {
-      clientIdPresent: !!clientId,
-      clientIdLength: clientId?.length,
-      clientSecretPresent: !!clientSecret,
-      clientSecretLength: clientSecret?.length,
-      redirectUri: env.ADOBE_REDIRECT_URI
-    });
 
     if (!clientId || !clientSecret) {
       throw new Error('Adobe credentials not found in KV');
@@ -75,69 +66,17 @@ app.get('/auth/callback', async (c) => {
   return handleOAuthCallback(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
-// Protected endpoints
-app.get('/albums', async (c) => {
-  const config = await getAdobeCredentials(c.env);
-  const accessToken = await getAccessToken(c.env['lightroom-worker-ADOBE_OAUTH_TOKENS'], config);
-
-  if (!accessToken) {
-    return c.json({ error: 'Not authenticated' }, 401);
-  }
-
-  const client = new LightroomClient(accessToken);
-  const albums = await client.getAlbums();
-  return c.json(albums);
-});
-
-// Test endpoint for Adobe API
-app.get('/test/albums', async (c) => {
-  try {
-    const config = await getAdobeCredentials(c.env);
-    const client = new LightroomClient(config.clientId, config.clientSecret, config.redirectUri);
-
-    const albums = await client.getAlbums();
-    return c.json(albums);
-  } catch (error) {
-    console.error('Error fetching albums:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
 // Lightroom API endpoints
-app.get('/api/lightroom/*', async (c) => {
+app.all('/api/lightroom/*', async (c) => {
   const config = await getAdobeCredentials(c.env);
-  return handleLightroomRequest(c.req, { ...config, ADOBE_API_KEY: c.env.ADOBE_API_KEY }, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
-});
-
-app.post('/api/lightroom/upload', async (c) => {
-  const config = await getAdobeCredentials(c.env);
-  return handleLightroomRequest(c.req, { ...config, ADOBE_API_KEY: c.env.ADOBE_API_KEY }, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
-});
-
-// Webhook endpoint for Lightroom events
-app.post('/webhook', async (c) => {
-  try {
-    const body = await c.req.json();
-    console.log('Received webhook:', body);
-
-    if (body.type === 'asset.created' || body.type === 'asset.updated') {
-      const config = await getAdobeCredentials(c.env);
-      const client = new LightroomClient(config.clientId, config.clientSecret, config.redirectUri);
-
-      // Fetch asset details
-      const asset = await client.getAsset(body.asset.id);
-      console.log('Asset details:', asset);
-
-      // TODO: Store asset in R2
-      // TODO: Update KV cache
-      // TODO: Trigger site rebuild
-    }
-
-    return c.json({ received: true });
-  } catch (error) {
-    console.error('Error processing webhook:', error);
-    return c.json({ error: error.message }, 500);
+  if (!c.env.ADOBE_API_KEY) {
+    return new Response('Adobe API key not configured', { status: 500 });
   }
+  return handleLightroomRequest(
+    c.req,
+    { ...config, ADOBE_API_KEY: c.env.ADOBE_API_KEY },
+    c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']
+  );
 });
 
 export default app;
