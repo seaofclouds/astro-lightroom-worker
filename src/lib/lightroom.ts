@@ -43,6 +43,11 @@ export interface LightroomAsset {
       longitude: number;
     };
   };
+  renditions?: {
+    thumbnail2x?: string;
+    fullsize?: string;
+    "2048"?: string;
+  };
 }
 
 export class LightroomClient {
@@ -198,7 +203,7 @@ export class LightroomClient {
       throw new Error('Account ID is required to get albums');
     }
 
-    const response = await this.request(`/v2/catalog/albums`);
+    const response = await this.request(`/v2/catalogs/${catalogId}/albums`);
     
     if (!response.resources) {
       console.warn('No albums found in catalog:', catalogId);
@@ -223,10 +228,13 @@ export class LightroomClient {
       throw new Error('Account ID is required to get assets');
     }
 
-    let endpoint = `/v2/catalog/assets?account_id=${this.accountId}`;
+    let endpoint = `/v2/catalogs/${catalogId}/assets`;
     if (albumId) {
-      endpoint = `/v2/catalog/albums/${albumId}/assets?account_id=${this.accountId}`;
+      endpoint = `/v2/catalogs/${catalogId}/albums/${albumId}/assets`;
     }
+
+    // Add account_id as a query parameter
+    endpoint += `?account_id=${this.accountId}`;
 
     if (options.limit) {
       endpoint += `&limit=${options.limit}`;
@@ -235,8 +243,172 @@ export class LightroomClient {
       endpoint += `&offset=${options.offset}`;
     }
 
+    console.log('Making request to:', endpoint);
     const response = await this.request(endpoint);
-    return response.resources;
+    console.log('Raw Adobe API response:', JSON.stringify(response, null, 2));
+    
+    if (!response.resources) {
+      console.warn('No assets found');
+      return [];
+    }
+
+    // Check if we have the expected links structure
+    if (response.resources[0]) {
+      console.log('First asset _links:', JSON.stringify(response.resources[0]._links, null, 2));
+      console.log('First asset full structure:', JSON.stringify(response.resources[0], null, 2));
+    }
+
+    return response.resources.map((asset: any) => {
+      const assetBase = {
+        id: asset.id,
+        created: asset.created,
+        updated: asset.updated,
+        subtype: asset.subtype || 'image',
+        name: asset.payload?.importSource?.fileName || asset.payload?.name || asset.name || 'Untitled Asset',
+        size: asset.payload?.importSource?.fileSize || asset.payload?.fileSize || 0,
+        type: asset.payload?.importSource?.mimeType || asset.payload?.type || 'image/jpeg',
+        metadata: {
+          dimensions: asset.payload?.develop?.croppedDimensions || {
+            width: asset.payload?.width || 0,
+            height: asset.payload?.height || 0
+          },
+          location: asset.payload?.develop?.userMetadata?.location || asset.payload?.location
+        }
+      };
+
+      // Add rendition URLs if we have _links
+      if (asset._links) {
+        const renditions: Record<string, string> = {};
+        const renditionBase = `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions`;
+        
+        // Add standard rendition sizes
+        renditions['thumbnail2x'] = `${renditionBase}/thumbnail2x`;
+        renditions['2048'] = `${renditionBase}/2048`;
+
+        // Find the largest available rendition for fullsize
+        const sizeKeys = Object.keys(asset._links).filter(key => /^\d+$/.test(key));
+        if (sizeKeys.length > 0) {
+          const maxSize = Math.max(...sizeKeys.map(k => parseInt(k)));
+          renditions['fullsize'] = `${renditionBase}/${maxSize}`;
+        }
+
+        return {
+          ...assetBase,
+          renditions
+        };
+      }
+
+      return assetBase;
+    });
+  }
+
+  async getAsset(
+    catalogId: string,
+    assetId: string
+  ): Promise<LightroomAsset> {
+    if (!this.accountId) {
+      throw new Error('Account ID is required to get asset');
+    }
+
+    const endpoint = `/v2/catalogs/${catalogId}/assets/${assetId}?account_id=${this.accountId}`;
+    console.log('Getting single asset from:', endpoint);
+    
+    const response = await this.request(endpoint);
+    console.log('Single asset response:', JSON.stringify(response, null, 2));
+
+    if (!response) {
+      throw new Error('Asset not found');
+    }
+
+    const asset = response;
+    return {
+      id: asset.id,
+      created: asset.created,
+      updated: asset.updated,
+      subtype: asset.subtype || 'image',
+      name: asset.payload?.importSource?.fileName || asset.payload?.name || asset.name || 'Untitled Asset',
+      size: asset.payload?.importSource?.fileSize || asset.payload?.fileSize || 0,
+      type: asset.payload?.importSource?.mimeType || asset.payload?.type || 'image/jpeg',
+      metadata: {
+        dimensions: asset.payload?.develop?.croppedDimensions || {
+          width: asset.payload?.width || 0,
+          height: asset.payload?.height || 0
+        },
+        location: asset.payload?.develop?.userMetadata?.location || asset.payload?.location
+      },
+      // Always include rendition URLs for single asset view
+      renditions: {
+        thumbnail2x: `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/thumbnail2x`,
+        '2048': `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/2048`,
+        fullsize: `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/2048`
+      }
+    };
+  }
+
+  async getAssetPreview(
+    catalogId: string,
+    assetId: string,
+    size: '2048' | 'thumbnail2x' | string
+  ): Promise<Response> {
+    if (!this.accountId) {
+      throw new Error('Account ID is required to get asset previews');
+    }
+
+    // First get the asset details
+    const assetEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}?account_id=${this.accountId}`;
+    console.log('Getting asset details from:', assetEndpoint);
+    
+    const assetResponse = await this.request(assetEndpoint);
+    console.log('Asset response:', JSON.stringify(assetResponse, null, 2));
+
+    // Use previews endpoint instead of renditions
+    const previewEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/previews/${size}?account_id=${this.accountId}`;
+    console.log('Getting preview from:', previewEndpoint);
+
+    try {
+      const previewResponse = await fetch(`${LIGHTROOM_API_BASE}${previewEndpoint}`, {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'x-api-key': this.apiKey!,
+          'X-Lightroom-Account-Id': this.accountId,
+          'Accept': 'image/*'
+        }
+      });
+
+      if (!previewResponse.ok) {
+        // If preview doesn't exist, try to create it
+        console.log('Preview GET failed, trying POST');
+        const createPreviewResponse = await fetch(`${LIGHTROOM_API_BASE}${previewEndpoint}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'x-api-key': this.apiKey!,
+            'X-Lightroom-Account-Id': this.accountId,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({})
+        });
+
+        if (!createPreviewResponse.ok) {
+          throw new Error(`Failed to create preview: ${createPreviewResponse.status} ${createPreviewResponse.statusText}`);
+        }
+
+        // After creating, try to get it again
+        return await fetch(`${LIGHTROOM_API_BASE}${previewEndpoint}`, {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'x-api-key': this.apiKey!,
+            'X-Lightroom-Account-Id': this.accountId,
+            'Accept': 'image/*'
+          }
+        });
+      }
+
+      return previewResponse;
+    } catch (error) {
+      console.error('Error in getAssetPreview:', error);
+      throw error;
+    }
   }
 
   async uploadAsset(
@@ -252,7 +424,7 @@ export class LightroomClient {
 
     // Step 1: Generate upload target
     const targetResponse = await this.request(
-      `/v2/catalog/assets?account_id=${this.accountId}`,
+      `/v2/catalogs/${catalogId}/assets?account_id=${this.accountId}`,
       {
         method: 'POST',
         headers: {
@@ -286,7 +458,7 @@ export class LightroomClient {
     // Step 3: Add to album if specified
     if (albumId) {
       await this.request(
-        `/v2/catalog/albums/${albumId}/assets/${targetResponse.asset.id}`,
+        `/v2/catalogs/${catalogId}/albums/${albumId}/assets/${targetResponse.asset.id}`,
         {
           method: 'PUT',
           headers: {
