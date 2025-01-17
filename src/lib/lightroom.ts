@@ -48,15 +48,20 @@ export interface LightroomAsset {
 export class LightroomClient {
   constructor(
     private readonly accessToken: string,
-    private readonly accountId?: string
+    private readonly accountId?: string,
+    private readonly apiKey?: string
   ) {}
 
   private async request(endpoint: string, options: RequestInit = {}) {
+    if (!this.apiKey) {
+      throw new Error('Adobe API key is required');
+    }
+
     const response = await fetch(`${LIGHTROOM_API_BASE}${endpoint}`, {
       ...options,
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
-        'x-api-key': process.env.ADOBE_API_KEY!,
+        'x-api-key': this.apiKey,
         ...options.headers,
       },
     });
@@ -155,7 +160,7 @@ export class LightroomClient {
       headers: {
         'Content-Type': mimeType,
         'Authorization': `Bearer ${this.accessToken}`,
-        'x-api-key': process.env.ADOBE_API_KEY!,
+        'x-api-key': this.apiKey,
       },
       body: file,
     });

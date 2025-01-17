@@ -2,9 +2,13 @@ import { LightroomClient } from '../lib/lightroom';
 import { getAccessToken } from './oauth';
 import { OAuthConfig } from './oauth';
 
+interface Env extends OAuthConfig {
+  ADOBE_API_KEY: string;
+}
+
 export async function handleLightroomRequest(
   request: Request,
-  config: OAuthConfig,
+  config: OAuthConfig & { ADOBE_API_KEY: string },
   storage: KVNamespace
 ) {
   try {
@@ -13,11 +17,28 @@ export async function handleLightroomRequest(
       return new Response('Unauthorized - No access token', { status: 401 });
     }
 
-    const url = new URL(request.url);
-    const accountId = url.searchParams.get('account_id');
-    const client = new LightroomClient(accessToken, accountId || undefined);
+    if (!config.ADOBE_API_KEY) {
+      return new Response('Adobe API key not configured', { status: 500 });
+    }
 
+    const url = new URL(request.url);
+    const client = new LightroomClient(accessToken, undefined, config.ADOBE_API_KEY);
     const path = url.pathname.replace('/api/lightroom', '');
+
+    // Get account ID first if not provided
+    let accountId = url.searchParams.get('account_id');
+    if (!accountId && path !== '/accounts') {
+      const accounts = await client.getAccounts();
+      if (accounts && accounts.length > 0) {
+        accountId = accounts[0].id;
+      } else {
+        return new Response('No Lightroom accounts found', { status: 404 });
+      }
+    }
+
+    // Create new client instance with account ID
+    const authenticatedClient = new LightroomClient(accessToken, accountId, config.ADOBE_API_KEY);
+
     const catalogId = url.searchParams.get('catalog_id');
     const albumId = url.searchParams.get('album_id');
 
@@ -29,7 +50,7 @@ export async function handleLightroomRequest(
         });
 
       case '/catalogs':
-        const catalogs = await client.getCatalogs();
+        const catalogs = await authenticatedClient.getCatalogs();
         return new Response(JSON.stringify(catalogs), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -38,7 +59,7 @@ export async function handleLightroomRequest(
         if (!catalogId) {
           return new Response('Missing catalog_id parameter', { status: 400 });
         }
-        const albums = await client.getAlbums(catalogId);
+        const albums = await authenticatedClient.getAlbums(catalogId);
         return new Response(JSON.stringify(albums), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -49,7 +70,7 @@ export async function handleLightroomRequest(
         }
         const limit = url.searchParams.get('limit');
         const offset = url.searchParams.get('offset');
-        const assets = await client.getAssets(catalogId, albumId || undefined, {
+        const assets = await authenticatedClient.getAssets(catalogId, albumId || undefined, {
           limit: limit ? parseInt(limit) : undefined,
           offset: offset ? parseInt(offset) : undefined,
         });
@@ -72,7 +93,7 @@ export async function handleLightroomRequest(
         }
 
         const buffer = await file.arrayBuffer();
-        const asset = await client.uploadAsset(
+        const asset = await authenticatedClient.uploadAsset(
           catalogId,
           albumId,
           buffer,

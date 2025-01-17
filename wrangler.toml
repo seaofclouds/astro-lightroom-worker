@@ -6,11 +6,9 @@ compatibility_date = "2024-01-16"
 [vars]
 ADOBE_REDIRECT_URI = "https://lightroom-worker.bot-7f9.workers.dev/auth/callback"
 DEPLOY_HOOK_URL = ""
-ADOBE_API_KEY = ""  # Add your Adobe API key here
 
 [vars.local]
 ADOBE_REDIRECT_URI = "http://127.0.0.1:8787/auth/callback"
-ADOBE_API_KEY = ""  # Add your Adobe API key here for local development
 
 # KV namespaces
 [[kv_namespaces]]

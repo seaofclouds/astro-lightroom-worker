@@ -106,12 +106,12 @@ app.get('/test/albums', async (c) => {
 // Lightroom API endpoints
 app.get('/api/lightroom/*', async (c) => {
   const config = await getAdobeCredentials(c.env);
-  return handleLightroomRequest(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
+  return handleLightroomRequest(c.req, { ...config, ADOBE_API_KEY: c.env.ADOBE_API_KEY }, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
 app.post('/api/lightroom/upload', async (c) => {
   const config = await getAdobeCredentials(c.env);
-  return handleLightroomRequest(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
+  return handleLightroomRequest(c.req, { ...config, ADOBE_API_KEY: c.env.ADOBE_API_KEY }, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
 // Webhook endpoint for Lightroom events
