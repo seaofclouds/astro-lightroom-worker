@@ -66,13 +66,22 @@ export class LightroomClient {
       accountId: this.accountId
     });
 
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${this.accessToken}`,
+      'x-api-key': this.apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+
+    // Add account ID header if available
+    if (this.accountId) {
+      headers['X-Lightroom-Account-Id'] = this.accountId;
+    }
+
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Authorization': `Bearer ${this.accessToken}`,
-        'x-api-key': this.apiKey,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        ...headers,
         ...options.headers,
       },
     });
@@ -132,27 +141,35 @@ export class LightroomClient {
       throw new Error('Account ID is required to get catalogs');
     }
 
-    try {
-      // Try to list existing catalogs
-      const response = await this.request(`/v2/catalogs?account_id=${this.accountId}&name=*`);
-      if (response.resources) {
-        return response.resources.map((catalog: any) => ({
-          id: catalog.id,
-          name: catalog.name || 'Untitled Catalog',
-          created: catalog.created,
-          updated: catalog.updated
-        }));
-      }
-    } catch (error: any) {
-      // If no catalogs exist, create one
-      if (error.message.includes('Resource not found')) {
-        console.log('No catalogs found, creating default catalog...');
-        const catalog = await this.createCatalog('My Lightroom Catalog');
-        return [catalog];
-      }
-      throw error;
+    // Get the catalog (singular since users only have one)
+    const response = await this.request('/v2/catalog');
+    
+    if (!response) {
+      console.warn('No catalog found in response:', response);
+      return [];
     }
-    return [];
+
+    // Return as array for backwards compatibility
+    return [{
+      id: response.id,
+      name: response.name || 'Lightroom Catalog',
+      created: response.created,
+      updated: response.updated
+    }];
+  }
+
+  async getCatalog(catalogId: string): Promise<LightroomCatalog> {
+    if (!this.accountId) {
+      throw new Error('Account ID is required to get catalog');
+    }
+
+    const response = await this.request(`/v2/catalog`);
+    return {
+      id: response.id,
+      name: response.name || 'Lightroom Catalog',
+      created: response.created,
+      updated: response.updated
+    };
   }
 
   async createCatalog(name: string): Promise<LightroomCatalog> {
@@ -160,7 +177,7 @@ export class LightroomClient {
       throw new Error('Account ID is required to create catalog');
     }
 
-    const response = await this.request('/v2/catalogs', {
+    const response = await this.request('/v2/catalog', {
       method: 'POST',
       body: JSON.stringify({
         name,
@@ -176,27 +193,25 @@ export class LightroomClient {
     };
   }
 
-  async getCatalog(catalogId: string): Promise<LightroomCatalog> {
-    if (!this.accountId) {
-      throw new Error('Account ID is required to get catalog');
-    }
-    const response = await this.request(`/v2/catalogs/${catalogId}?account_id=${this.accountId}`);
-    return {
-      id: response.id,
-      name: response.name || 'Untitled Catalog',
-      created: response.created,
-      updated: response.updated
-    };
-  }
-
   async getAlbums(catalogId: string): Promise<LightroomAlbum[]> {
     if (!this.accountId) {
       throw new Error('Account ID is required to get albums');
     }
-    const response = await this.request(
-      `/v2/catalogs/${catalogId}/albums?account_id=${this.accountId}`
-    );
-    return response.resources;
+
+    const response = await this.request(`/v2/catalog/albums`);
+    
+    if (!response.resources) {
+      console.warn('No albums found in catalog:', catalogId);
+      return [];
+    }
+
+    return response.resources.map((album: any) => ({
+      id: album.id,
+      name: album.name || 'Untitled Album',
+      created: album.created,
+      updated: album.updated,
+      type: album.subtype
+    }));
   }
 
   async getAssets(
@@ -208,9 +223,9 @@ export class LightroomClient {
       throw new Error('Account ID is required to get assets');
     }
 
-    let endpoint = `/v2/catalogs/${catalogId}/assets?account_id=${this.accountId}`;
+    let endpoint = `/v2/catalog/assets?account_id=${this.accountId}`;
     if (albumId) {
-      endpoint = `/v2/catalogs/${catalogId}/albums/${albumId}/assets?account_id=${this.accountId}`;
+      endpoint = `/v2/catalog/albums/${albumId}/assets?account_id=${this.accountId}`;
     }
 
     if (options.limit) {
@@ -237,7 +252,7 @@ export class LightroomClient {
 
     // Step 1: Generate upload target
     const targetResponse = await this.request(
-      `/v2/catalogs/${catalogId}/assets?account_id=${this.accountId}`,
+      `/v2/catalog/assets?account_id=${this.accountId}`,
       {
         method: 'POST',
         headers: {
@@ -271,7 +286,7 @@ export class LightroomClient {
     // Step 3: Add to album if specified
     if (albumId) {
       await this.request(
-        `/v2/catalogs/${catalogId}/albums/${albumId}/assets/${targetResponse.asset.id}`,
+        `/v2/catalog/albums/${albumId}/assets/${targetResponse.asset.id}`,
         {
           method: 'PUT',
           headers: {

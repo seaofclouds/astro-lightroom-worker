@@ -61,24 +61,38 @@ export async function handleLightroomRequest(
           });
         }
 
-      case '/catalogs':
-        console.log('Fetching catalogs for account:', accountId);
+      case '/catalog':
+        console.log('Fetching catalog for account:', accountId);
         try {
+          console.log('Initializing Lightroom client with token and account ID:', {
+            tokenLength: accessToken?.length,
+            accountId
+          });
           const catalogs = await authenticatedClient.getCatalogs();
-          console.log('Catalogs response:', JSON.stringify(catalogs, null, 2));
+          console.log('Catalog response:', JSON.stringify(catalogs, null, 2));
           return new Response(JSON.stringify(catalogs), {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
-          console.error('Error fetching catalogs:', error, {
+          console.error('Error fetching catalog:', error, {
             accountId,
-            accessToken: accessToken ? `${accessToken.substring(0, 10)}...` : null
+            accessToken: accessToken ? `${accessToken.substring(0, 10)}...` : null,
+            errorStack: error.stack
           });
           return new Response(JSON.stringify({ error: error.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
           });
         }
+
+      case '/catalogs':
+        console.log('Warning: /catalogs endpoint is deprecated, use /catalog instead');
+        const catalogRequest = new Request(request.url.replace('/catalogs', '/catalog'), {
+          method: request.method,
+          headers: request.headers,
+          body: request.body
+        });
+        return handleLightroomRequest(catalogRequest, config, storage);
 
       case '/albums':
         if (!catalogId) {
