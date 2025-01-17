@@ -3,8 +3,8 @@ import { handleOAuthStart, handleOAuthCallback, getAccessToken } from './handler
 import { LightroomClient } from './lib/adobe-client';
 
 interface Env {
-  ADOBE_AUTH: KVNamespace;
-  ADOBE_CREDENTIALS: KVNamespace;
+  'lightroom-worker-ADOBE_OAUTH_TOKENS': KVNamespace;
+  'lightroom-worker-ADOBE_API_CREDENTIALS': KVNamespace;
   ADOBE_REDIRECT_URI: string;
   DEPLOY_HOOK_URL: string;
   PHOTOS_BUCKET?: R2Bucket;
@@ -14,26 +14,33 @@ interface Env {
 const app = new Hono<{ Bindings: Env }>();
 
 async function getAdobeCredentials(env: Env) {
-  const [clientId, clientSecret] = await Promise.all([
-    env.ADOBE_CREDENTIALS.get('client_id'),
-    env.ADOBE_CREDENTIALS.get('client_secret')
-  ]);
+  try {
+    const [clientId, clientSecret] = await Promise.all([
+      env['lightroom-worker-ADOBE_API_CREDENTIALS'].get('client_id'),
+      env['lightroom-worker-ADOBE_API_CREDENTIALS'].get('client_secret')
+    ]);
 
-  console.log('Retrieved credentials:', {
-    clientId,
-    clientSecret: clientSecret ? '[PRESENT]' : '[MISSING]',
-    redirectUri: env.ADOBE_REDIRECT_URI
-  });
+    console.log('Retrieved credentials:', {
+      clientIdPresent: !!clientId,
+      clientIdLength: clientId?.length,
+      clientSecretPresent: !!clientSecret,
+      clientSecretLength: clientSecret?.length,
+      redirectUri: env.ADOBE_REDIRECT_URI
+    });
 
-  if (!clientId || !clientSecret) {
-    throw new Error('Adobe credentials not found in KV');
+    if (!clientId || !clientSecret) {
+      throw new Error('Adobe credentials not found in KV');
+    }
+
+    return {
+      clientId,
+      clientSecret,
+      redirectUri: env.ADOBE_REDIRECT_URI
+    };
+  } catch (error) {
+    console.error('Error retrieving credentials:', error);
+    throw error;
   }
-
-  return {
-    clientId,
-    clientSecret,
-    redirectUri: env.ADOBE_REDIRECT_URI
-  };
 }
 
 // Health check endpoint
@@ -48,8 +55,8 @@ app.post('/admin/credentials', async (c) => {
   }
 
   await Promise.all([
-    c.env.ADOBE_CREDENTIALS.put('client_id', clientId),
-    c.env.ADOBE_CREDENTIALS.put('client_secret', clientSecret)
+    c.env['lightroom-worker-ADOBE_API_CREDENTIALS'].put('client_id', clientId),
+    c.env['lightroom-worker-ADOBE_API_CREDENTIALS'].put('client_secret', clientSecret)
   ]);
 
   return c.json({ message: 'Credentials updated successfully' });
@@ -63,13 +70,13 @@ app.get('/auth/start', async (c) => {
 
 app.get('/auth/callback', async (c) => {
   const config = await getAdobeCredentials(c.env);
-  return handleOAuthCallback(c.req, config, c.env.ADOBE_AUTH);
+  return handleOAuthCallback(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
 // Protected endpoints
 app.get('/albums', async (c) => {
   const config = await getAdobeCredentials(c.env);
-  const accessToken = await getAccessToken(c.env.ADOBE_AUTH, config);
+  const accessToken = await getAccessToken(c.env['lightroom-worker-ADOBE_OAUTH_TOKENS'], config);
 
   if (!accessToken) {
     return c.json({ error: 'Not authenticated' }, 401);

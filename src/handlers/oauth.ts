@@ -8,21 +8,35 @@ interface OAuthConfig {
 }
 
 export async function handleOAuthStart(config: OAuthConfig) {
-  const params = new URLSearchParams({
-    client_id: config.clientId,
-    redirect_uri: config.redirectUri,
-    scope: 'openid,AdobeID,lr_partner_apis',
-    response_type: 'code',
-    state: crypto.randomUUID(),
-    prompt: 'login consent',
-    locale: 'en_US'
-  });
+  try {
+    const state = crypto.randomUUID();
+    
+    const params = new URLSearchParams({
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri,
+      scope: 'openid,AdobeID,lr_partner_apis',
+      response_type: 'code',
+      state,
+      prompt: 'login consent',
+      locale: 'en_US'
+    });
 
-  const authUrl = `${ADOBE_AUTH_URL}?${params.toString()}`;
-  console.log('Authorization URL:', authUrl);
-  console.log('Config:', { ...config, clientSecret: '[REDACTED]' });
+    const authUrl = `${ADOBE_AUTH_URL}?${params.toString()}`;
+    console.log('Starting OAuth flow:', {
+      authUrl,
+      clientIdLength: config.clientId.length,
+      redirectUri: config.redirectUri,
+      state
+    });
 
-  return Response.redirect(authUrl);
+    return Response.redirect(authUrl);
+  } catch (error) {
+    console.error('Error in handleOAuthStart:', error);
+    return new Response(`Internal Server Error: ${error.message}`, { 
+      status: 500,
+      headers: { 'Content-Type': 'text/plain' }
+    });
+  }
 }
 
 export async function handleOAuthCallback(request: Request, config: OAuthConfig, storage: KVNamespace) {
@@ -32,7 +46,12 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
   const error = url.searchParams.get('error');
   const error_description = url.searchParams.get('error_description');
 
-  console.log('OAuth callback params:', { code, state, error, error_description });
+  console.log('OAuth callback received:', {
+    code: code ? `${code.substring(0, 5)}...` : null,
+    state,
+    error,
+    error_description
+  });
 
   if (error || error_description) {
     console.error('OAuth error:', { error, error_description });
@@ -52,21 +71,19 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     redirect_uri: config.redirectUri,
   };
 
-  // Log full request details
   console.log('Token request:', {
     url: ADOBE_TOKEN_URL,
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    params: { ...tokenParams, client_secret: '[REDACTED]' }
+    clientIdLength: config.clientId.length,
+    clientSecretLength: config.clientSecret.length,
+    code: `${code.substring(0, 5)}...`,
+    redirectUri: config.redirectUri
   });
 
-  // Exchange code for access token
   const tokenResponse = await fetch(ADOBE_TOKEN_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json'
     },
     body: new URLSearchParams(tokenParams),
   });
@@ -77,62 +94,27 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
       status: tokenResponse.status,
       statusText: tokenResponse.statusText,
       error: errorText,
-      requestParams: { ...tokenParams, client_secret: '[REDACTED]' }
+      requestParams: {
+        ...tokenParams,
+        client_secret: '[REDACTED]',
+        code: `${code.substring(0, 5)}...`
+      }
     });
     return new Response(`Failed to exchange code for token: ${errorText}`, { status: 500 });
   }
 
-  const tokens = await tokenResponse.json();
-  
-  // Store tokens in KV
-  await storage.put('adobe_tokens', JSON.stringify({
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_at: Date.now() + (tokens.expires_in * 1000),
-  }));
+  const tokenData = await tokenResponse.json();
+  await storage.put('access_token', tokenData.access_token);
+  await storage.put('refresh_token', tokenData.refresh_token);
 
-  return new Response('Authorization successful! You can close this window.');
+  return Response.redirect('/');
 }
 
 export async function getAccessToken(storage: KVNamespace, config: OAuthConfig): Promise<string | null> {
-  const tokensStr = await storage.get('adobe_tokens');
-  if (!tokensStr) return null;
-
-  const tokens = JSON.parse(tokensStr);
-  const now = Date.now();
-
-  // Check if token is expired or about to expire
-  if (tokens.expires_at - now < 5 * 60 * 1000) {
-    // Refresh token
-    const refreshResponse = await fetch(ADOBE_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        refresh_token: tokens.refresh_token,
-      }),
-    });
-
-    if (!refreshResponse.ok) {
-      console.error('Token refresh failed');
-      return null;
-    }
-
-    const newTokens = await refreshResponse.json();
-    
-    // Update stored tokens
-    await storage.put('adobe_tokens', JSON.stringify({
-      access_token: newTokens.access_token,
-      refresh_token: newTokens.refresh_token,
-      expires_at: Date.now() + (newTokens.expires_in * 1000),
-    }));
-
-    return newTokens.access_token;
+  const accessToken = await storage.get('access_token');
+  if (!accessToken) {
+    console.log('No access token found');
+    return null;
   }
-
-  return tokens.access_token;
+  return accessToken;
 }
