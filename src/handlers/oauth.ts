@@ -1,5 +1,5 @@
 const ADOBE_AUTH_URL = 'https://ims-na1.adobelogin.com/ims/authorize/v2';
-const ADOBE_TOKEN_URL = 'https://ims-na1.adobelogin.com/ims/token/v3';
+const ADOBE_TOKEN_URL = 'https://ims-na1.adobelogin.com/ims/token/v1';
 
 interface OAuthConfig {
   clientId: string;
@@ -11,7 +11,7 @@ export async function handleOAuthStart(config: OAuthConfig) {
   const params = new URLSearchParams({
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
-    scope: 'openid,lr_partner_apis',
+    scope: 'openid,lr_partner_apis,lr_partner_rendition_apis,lr_partner_catalog_apis,lr_partner_metadata_apis',
     response_type: 'code',
     state: crypto.randomUUID(),
   });
@@ -23,10 +23,29 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+  const error_description = url.searchParams.get('error_description');
+
+  console.log('OAuth callback params:', { code, state, error, error_description });
+
+  if (error || error_description) {
+    console.error('OAuth error:', { error, error_description });
+    return new Response(`OAuth error: ${error_description || error}`, { status: 400 });
+  }
 
   if (!code) {
+    console.error('Missing authorization code');
     return new Response('Missing authorization code', { status: 400 });
   }
+
+  // Log the request we're about to make
+  console.log('Exchanging code for token with params:', {
+    grant_type: 'authorization_code',
+    client_id: config.clientId,
+    client_secret: '[REDACTED]',
+    code,
+    redirect_uri: config.redirectUri,
+  });
 
   // Exchange code for access token
   const tokenResponse = await fetch(ADOBE_TOKEN_URL, {
@@ -44,9 +63,13 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
   });
 
   if (!tokenResponse.ok) {
-    const error = await tokenResponse.text();
-    console.error('Token exchange failed:', error);
-    return new Response('Failed to exchange code for token', { status: 500 });
+    const errorText = await tokenResponse.text();
+    console.error('Token exchange failed:', {
+      status: tokenResponse.status,
+      statusText: tokenResponse.statusText,
+      error: errorText
+    });
+    return new Response(`Failed to exchange code for token: ${errorText}`, { status: 500 });
   }
 
   const tokens = await tokenResponse.json();
