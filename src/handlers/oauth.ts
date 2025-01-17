@@ -63,25 +63,18 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     return new Response('Missing authorization code', { status: 400 });
   }
 
-  // URL encode the client secret
-  const encodedClientSecret = encodeURIComponent(config.clientSecret);
-  console.log('Client secret encoding:', {
-    originalLength: config.clientSecret.length,
-    encodedLength: encodedClientSecret.length
-  });
+  // Create form data exactly as Adobe expects it
+  const formData = new FormData();
+  formData.append('grant_type', 'authorization_code');
+  formData.append('client_id', config.clientId);
+  formData.append('client_secret', config.clientSecret);
+  formData.append('code', code);
+  formData.append('redirect_uri', config.redirectUri);
 
-  const tokenParams = {
-    grant_type: 'authorization_code',
-    client_id: config.clientId,
-    client_secret: encodedClientSecret,
-    code,
-    redirect_uri: config.redirectUri,
-  };
-
-  console.log('Token request:', {
+  console.log('Token request details:', {
     url: ADOBE_TOKEN_URL,
     clientIdLength: config.clientId.length,
-    clientSecretLength: encodedClientSecret.length,
+    clientSecretLength: config.clientSecret.length,
     code: `${code.substring(0, 5)}...`,
     redirectUri: config.redirectUri
   });
@@ -89,10 +82,9 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
   const tokenResponse = await fetch(ADOBE_TOKEN_URL, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
       'Accept': 'application/json'
     },
-    body: new URLSearchParams(tokenParams),
+    body: formData
   });
 
   if (!tokenResponse.ok) {
@@ -102,9 +94,11 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
       statusText: tokenResponse.statusText,
       error: errorText,
       requestParams: {
-        ...tokenParams,
+        grant_type: 'authorization_code',
+        client_id: config.clientId,
         client_secret: '[REDACTED]',
-        code: `${code.substring(0, 5)}...`
+        code: `${code.substring(0, 5)}...`,
+        redirect_uri: config.redirectUri
       }
     });
     return new Response(`Failed to exchange code for token: ${errorText}`, { status: 500 });
