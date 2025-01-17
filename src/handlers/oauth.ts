@@ -63,44 +63,53 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     return new Response('Missing authorization code', { status: 400 });
   }
 
-  // Create form data exactly as Adobe expects it
-  const formData = new FormData();
-  formData.append('grant_type', 'authorization_code');
-  formData.append('client_id', config.clientId);
-  formData.append('client_secret', config.clientSecret);
-  formData.append('code', code);
-  formData.append('redirect_uri', config.redirectUri);
+  // Create URLSearchParams for token request
+  const params = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    code: code,
+    redirect_uri: config.redirectUri
+  });
 
   console.log('Token request details:', {
     url: ADOBE_TOKEN_URL,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json'
+    },
+    params: Object.fromEntries(params.entries()),
+    clientIdPresent: !!config.clientId,
+    clientSecretPresent: !!config.clientSecret,
     clientIdLength: config.clientId.length,
     clientSecretLength: config.clientSecret.length,
-    code: `${code.substring(0, 5)}...`,
     redirectUri: config.redirectUri
   });
 
   const tokenResponse = await fetch(ADOBE_TOKEN_URL, {
     method: 'POST',
     headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
       'Accept': 'application/json'
     },
-    body: formData
+    body: params.toString()
   });
 
   if (!tokenResponse.ok) {
     const errorText = await tokenResponse.text();
-    console.error('Token exchange failed:', {
+    const errorDetails = {
       status: tokenResponse.status,
       statusText: tokenResponse.statusText,
       error: errorText,
+      headers: Object.fromEntries(tokenResponse.headers.entries()),
       requestParams: {
         grant_type: 'authorization_code',
-        client_id: config.clientId,
-        client_secret: '[REDACTED]',
         code: `${code.substring(0, 5)}...`,
         redirect_uri: config.redirectUri
       }
-    });
+    };
+    console.error('Token exchange failed:', errorDetails);
     return new Response(`Failed to exchange code for token: ${errorText}`, { status: 500 });
   }
 
