@@ -63,10 +63,17 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     return new Response('Missing authorization code', { status: 400 });
   }
 
+  // URL encode the client secret
+  const encodedClientSecret = encodeURIComponent(config.clientSecret);
+  console.log('Client secret encoding:', {
+    originalLength: config.clientSecret.length,
+    encodedLength: encodedClientSecret.length
+  });
+
   const tokenParams = {
     grant_type: 'authorization_code',
     client_id: config.clientId,
-    client_secret: config.clientSecret,
+    client_secret: encodedClientSecret,
     code,
     redirect_uri: config.redirectUri,
   };
@@ -74,7 +81,7 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
   console.log('Token request:', {
     url: ADOBE_TOKEN_URL,
     clientIdLength: config.clientId.length,
-    clientSecretLength: config.clientSecret.length,
+    clientSecretLength: encodedClientSecret.length,
     code: `${code.substring(0, 5)}...`,
     redirectUri: config.redirectUri
   });
