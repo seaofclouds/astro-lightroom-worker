@@ -19,6 +19,12 @@ async function getAdobeCredentials(env: Env) {
     env.ADOBE_CREDENTIALS.get('client_secret')
   ]);
 
+  console.log('Retrieved credentials:', {
+    clientId,
+    clientSecret: clientSecret ? '[PRESENT]' : '[MISSING]',
+    redirectUri: env.ADOBE_REDIRECT_URI
+  });
+
   if (!clientId || !clientSecret) {
     throw new Error('Adobe credentials not found in KV');
   }

@@ -1,5 +1,5 @@
 const ADOBE_AUTH_URL = 'https://ims-na1.adobelogin.com/ims/authorize/v2';
-const ADOBE_TOKEN_URL = 'https://ims-na1.adobelogin.com/ims/token/v1';
+const ADOBE_TOKEN_URL = 'https://ims-na1.adobelogin.com/ims/token/v3';
 
 interface OAuthConfig {
   clientId: string;
@@ -14,9 +14,15 @@ export async function handleOAuthStart(config: OAuthConfig) {
     scope: 'openid,AdobeID,lr_partner_apis',
     response_type: 'code',
     state: crypto.randomUUID(),
+    prompt: 'login consent',
+    locale: 'en_US'
   });
 
-  return Response.redirect(`${ADOBE_AUTH_URL}?${params.toString()}`);
+  const authUrl = `${ADOBE_AUTH_URL}?${params.toString()}`;
+  console.log('Authorization URL:', authUrl);
+  console.log('Config:', { ...config, clientSecret: '[REDACTED]' });
+
+  return Response.redirect(authUrl);
 }
 
 export async function handleOAuthCallback(request: Request, config: OAuthConfig, storage: KVNamespace) {
@@ -38,13 +44,22 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     return new Response('Missing authorization code', { status: 400 });
   }
 
-  // Log the request we're about to make
-  console.log('Exchanging code for token with params:', {
+  const tokenParams = {
     grant_type: 'authorization_code',
     client_id: config.clientId,
-    client_secret: '[REDACTED]',
+    client_secret: config.clientSecret,
     code,
     redirect_uri: config.redirectUri,
+  };
+
+  // Log full request details
+  console.log('Token request:', {
+    url: ADOBE_TOKEN_URL,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    params: { ...tokenParams, client_secret: '[REDACTED]' }
   });
 
   // Exchange code for access token
@@ -53,13 +68,7 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      code,
-      redirect_uri: config.redirectUri,
-    }),
+    body: new URLSearchParams(tokenParams),
   });
 
   if (!tokenResponse.ok) {
@@ -67,7 +76,8 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     console.error('Token exchange failed:', {
       status: tokenResponse.status,
       statusText: tokenResponse.statusText,
-      error: errorText
+      error: errorText,
+      requestParams: { ...tokenParams, client_secret: '[REDACTED]' }
     });
     return new Response(`Failed to exchange code for token: ${errorText}`, { status: 500 });
   }
