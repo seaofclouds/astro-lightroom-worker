@@ -4,5 +4,16 @@ compatibility_date = "2024-01-16"
 
 # Variable bindings
 [vars]
-ADOBE_CLIENT_ID = ""
+ADOBE_CLIENT_ID = "" # Add your client ID here
+ADOBE_CLIENT_SECRET = "" # Add your client secret here
+ADOBE_REDIRECT_URI = "https://lightroom-worker.bot-7f9.workers.dev/auth/callback"
 DEPLOY_HOOK_URL = ""
+
+# KV namespaces
+[[kv_namespaces]]
+binding = "ADOBE_AUTH"
+id = "b4606e3118c94b25a0b99ff9815fc8ca"
+
+[[kv_namespaces]]
+binding = "ADOBE_CREDENTIALS"
+id = "9799cc02d7af4843b133e32f4b937e5e"
