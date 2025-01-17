@@ -11,7 +11,7 @@ export async function handleOAuthStart(config: OAuthConfig) {
   const params = new URLSearchParams({
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
-    scope: 'openid,lr_partner_apis,lr_partner_rendition_apis,lr_partner_catalog_apis,lr_partner_metadata_apis',
+    scope: 'openid,AdobeID,lr_partner_apis',
     response_type: 'code',
     state: crypto.randomUUID(),
   });
