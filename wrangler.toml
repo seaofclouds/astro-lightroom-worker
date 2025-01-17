@@ -1,0 +1,8 @@
+name = "lightroom-worker"
+main = "src/worker.ts"
+compatibility_date = "2024-01-16"
+
+# Variable bindings
+[vars]
+ADOBE_CLIENT_ID = ""
+DEPLOY_HOOK_URL = ""
