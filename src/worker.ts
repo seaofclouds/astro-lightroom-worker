@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import { handleOAuthStart, handleOAuthCallback, getAccessToken } from './handlers/oauth';
 import { LightroomClient } from './lib/adobe-client';
+import { handleLightroomRequest } from './handlers/lightroom';
 
 interface Env {
   'lightroom-worker-ADOBE_OAUTH_TOKENS': KVNamespace;
   'lightroom-worker-ADOBE_API_CREDENTIALS': KVNamespace;
   ADOBE_REDIRECT_URI: string;
+  ADOBE_API_KEY: string;
   DEPLOY_HOOK_URL: string;
   PHOTOS_BUCKET?: R2Bucket;
   PHOTO_CACHE?: KVNamespace;
@@ -99,6 +101,17 @@ app.get('/test/albums', async (c) => {
     console.error('Error fetching albums:', error);
     return c.json({ error: error.message }, 500);
   }
+});
+
+// Lightroom API endpoints
+app.get('/api/lightroom/*', async (c) => {
+  const config = await getAdobeCredentials(c.env);
+  return handleLightroomRequest(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
+});
+
+app.post('/api/lightroom/upload', async (c) => {
+  const config = await getAdobeCredentials(c.env);
+  return handleLightroomRequest(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
 // Webhook endpoint for Lightroom events
