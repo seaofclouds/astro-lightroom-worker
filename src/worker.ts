@@ -14,7 +14,7 @@ interface Env {
 
 const app = new Hono<{ Bindings: Env }>();
 
-async function getAdobeCredentials(env: Env) {
+async function getAdobeCredentials(env: Env, requireApiKey: boolean = false) {
   try {
     const [clientId, clientSecret] = await Promise.all([
       env['lightroom-worker-ADOBE_API_CREDENTIALS'].get('client_id'),
@@ -25,11 +25,18 @@ async function getAdobeCredentials(env: Env) {
       throw new Error('Adobe credentials not found in KV');
     }
 
-    return {
+    const config = {
       clientId,
       clientSecret,
       redirectUri: env.ADOBE_REDIRECT_URI
     };
+
+    if (requireApiKey) {
+      // Use clientId as API key since they're the same in Adobe's case
+      return { ...config, ADOBE_API_KEY: clientId };
+    }
+
+    return config;
   } catch (error) {
     console.error('Error retrieving credentials:', error);
     throw error;
@@ -57,26 +64,28 @@ app.post('/admin/credentials', async (c) => {
 
 // OAuth endpoints
 app.get('/auth/start', async (c) => {
-  const config = await getAdobeCredentials(c.env);
+  const config = await getAdobeCredentials(c.env, false);
   return handleOAuthStart(config);
 });
 
 app.get('/auth/callback', async (c) => {
-  const config = await getAdobeCredentials(c.env);
+  const config = await getAdobeCredentials(c.env, false);
   return handleOAuthCallback(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
 // Lightroom API endpoints
 app.all('/api/lightroom/*', async (c) => {
-  const config = await getAdobeCredentials(c.env);
-  if (!c.env.ADOBE_API_KEY) {
-    return new Response('Adobe API key not configured', { status: 500 });
+  try {
+    const config = await getAdobeCredentials(c.env, true);
+    return handleLightroomRequest(
+      c.req,
+      config,
+      c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']
+    );
+  } catch (error) {
+    console.error('Error in Lightroom API request:', error);
+    return new Response(error.message, { status: 500 });
   }
-  return handleLightroomRequest(
-    c.req,
-    { ...config, ADOBE_API_KEY: c.env.ADOBE_API_KEY },
-    c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']
-  );
 });
 
 export default app;

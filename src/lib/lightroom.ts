@@ -57,33 +57,136 @@ export class LightroomClient {
       throw new Error('Adobe API key is required');
     }
 
-    const response = await fetch(`${LIGHTROOM_API_BASE}${endpoint}`, {
+    const url = `${LIGHTROOM_API_BASE}${endpoint}`;
+    console.log('Making Lightroom API request:', {
+      url,
+      method: options.method || 'GET',
+      hasToken: !!this.accessToken,
+      hasApiKey: !!this.apiKey,
+      accountId: this.accountId
+    });
+
+    const response = await fetch(url, {
       ...options,
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
         'x-api-key': this.apiKey,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
         ...options.headers,
       },
     });
 
+    let responseText = await response.text();
+    
+    // Remove the while(1){} prefix if it exists
+    const whilePrefix = 'while (1) {}';
+    if (responseText.startsWith(whilePrefix)) {
+      responseText = responseText.substring(whilePrefix.length).trim();
+    }
+
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (error) {
+      console.error('Error parsing JSON response:', {
+        error,
+        responseText,
+        url
+      });
+      throw new Error('Invalid JSON response from Lightroom API');
+    }
+
     if (!response.ok) {
+      console.error('Lightroom API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        url,
+        response: responseData,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+
+      // Handle Adobe's error format
+      if (responseData.code && responseData.description) {
+        throw new Error(`Adobe API Error (${responseData.code}): ${responseData.description}`);
+      }
+
       throw new Error(`Lightroom API error: ${response.status} ${response.statusText}`);
     }
 
-    return response.json();
+    return responseData;
   }
 
   async getAccounts(): Promise<LightroomAccount[]> {
     const response = await this.request('/v2/account');
-    return response.accounts;
+    // The account endpoint returns a single account object, not an array
+    return [{
+      id: response.id,
+      name: response.full_name,
+      type: response.type
+    }];
   }
 
   async getCatalogs(): Promise<LightroomCatalog[]> {
     if (!this.accountId) {
       throw new Error('Account ID is required to get catalogs');
     }
-    const response = await this.request(`/v2/catalogs?account_id=${this.accountId}`);
-    return response.resources;
+
+    try {
+      // Try to list existing catalogs
+      const response = await this.request(`/v2/catalogs?account_id=${this.accountId}&name=*`);
+      if (response.resources) {
+        return response.resources.map((catalog: any) => ({
+          id: catalog.id,
+          name: catalog.name || 'Untitled Catalog',
+          created: catalog.created,
+          updated: catalog.updated
+        }));
+      }
+    } catch (error: any) {
+      // If no catalogs exist, create one
+      if (error.message.includes('Resource not found')) {
+        console.log('No catalogs found, creating default catalog...');
+        const catalog = await this.createCatalog('My Lightroom Catalog');
+        return [catalog];
+      }
+      throw error;
+    }
+    return [];
+  }
+
+  async createCatalog(name: string): Promise<LightroomCatalog> {
+    if (!this.accountId) {
+      throw new Error('Account ID is required to create catalog');
+    }
+
+    const response = await this.request('/v2/catalogs', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        account_id: this.accountId
+      })
+    });
+
+    return {
+      id: response.id,
+      name: response.name || 'Untitled Catalog',
+      created: response.created,
+      updated: response.updated
+    };
+  }
+
+  async getCatalog(catalogId: string): Promise<LightroomCatalog> {
+    if (!this.accountId) {
+      throw new Error('Account ID is required to get catalog');
+    }
+    const response = await this.request(`/v2/catalogs/${catalogId}?account_id=${this.accountId}`);
+    return {
+      id: response.id,
+      name: response.name || 'Untitled Catalog',
+      created: response.created,
+      updated: response.updated
+    };
   }
 
   async getAlbums(catalogId: string): Promise<LightroomAlbum[]> {
