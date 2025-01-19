@@ -349,23 +349,135 @@ export class LightroomClient {
     };
   }
 
+  async getAvailableRenditionSizes(catalogId: string, assetId: string): Promise<string[]> {
+    const response = await this.request(`/v2/catalogs/${catalogId}/assets/${assetId}/renditions`);
+    return Object.keys(response);
+  }
+
+  async checkRenditionStatus(
+    catalogId: string,
+    assetId: string,
+    size: string
+  ): Promise<boolean> {
+    const statusEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions/${size}`;
+    console.log('Checking rendition status:', statusEndpoint);
+
+    try {
+      const response = await fetch(`${LIGHTROOM_API_BASE}${statusEndpoint}`, {
+        method: 'HEAD',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'x-api-key': this.apiKey!,
+          'X-Lightroom-Client-Id': this.clientId
+        }
+      });
+
+      return response.ok;
+    } catch (error) {
+      console.error('Error checking rendition status:', error);
+      return false;
+    }
+  }
+
   async getAssetPreview(
     catalogId: string,
     assetId: string,
-    size: 'thumbnail2x' | 'fullsize' | '640' | '1280' | '2048' | '2560' = '2048'
+    size: 'thumbnail2x' | 'fullsize' | '640' | '1280' | '2048' | '2560' | string = '2048'
   ): Promise<Response> {
     if (!this.accessToken || !this.apiKey) {
       throw new Error('Access token and API key are required');
     }
 
     try {
-      // For fullsize, use 2560 as it's the highest quality
-      const requestedSize = size === 'fullsize' ? '2560' : size;
-      
-      // Try to get the rendition
+      // For fullsize, get the largest available size
+      let requestedSize = size;
+      if (size === 'fullsize') {
+        const availableSizes = await this.getAvailableRenditionSizes(catalogId, assetId);
+        console.log('Available sizes for asset:', availableSizes);
+        
+        // Convert sizes to numbers where possible for comparison
+        const numericSizes = availableSizes
+          .map(s => parseInt(s))
+          .filter(n => !isNaN(n));
+        
+        if (numericSizes.length > 0) {
+          requestedSize = Math.max(...numericSizes).toString();
+          console.log('Using largest available size:', requestedSize);
+        } else {
+          // If no numeric sizes, use the last available size
+          requestedSize = availableSizes[availableSizes.length - 1] || '2560';
+          console.log('Using fallback size:', requestedSize);
+        }
+      }
+
       const renditionEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions/${requestedSize}`;
       console.log('Getting rendition from:', renditionEndpoint);
 
+      // Check if rendition exists first
+      const exists = await this.checkRenditionStatus(catalogId, assetId, requestedSize);
+      
+      if (!exists) {
+        console.log('Rendition not found, generating...');
+        
+        const generateEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions`;
+        console.log('Generating rendition at:', generateEndpoint, 'with size:', requestedSize);
+        
+        const generateResponse = await fetch(`${LIGHTROOM_API_BASE}${generateEndpoint}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'x-api-key': this.apiKey,
+            'X-Lightroom-Client-Id': this.clientId,
+            'X-Generate-Renditions': requestedSize,
+            'Content-Length': '0'
+          }
+        });
+
+        if (!generateResponse.ok) {
+          const errorText = await generateResponse.text();
+          console.error('Generate rendition error:', errorText);
+          throw new Error(`Failed to generate rendition: ${generateResponse.status} ${generateResponse.statusText}`);
+        }
+
+        // Calculate base wait time based on size
+        const sizeNum = parseInt(requestedSize);
+        const baseWaitTime = !isNaN(sizeNum) ? 
+          Math.max(2000, Math.min(10000, Math.floor(sizeNum / 256) * 1000)) : 
+          5000;
+        
+        console.log(`Using base wait time of ${baseWaitTime}ms for size ${requestedSize}`);
+
+        // Wait and check status with increasing intervals
+        const maxRetries = 8; // Longer maximum retry count
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          const waitTime = baseWaitTime * Math.pow(1.5, attempt);
+          console.log(`Waiting ${waitTime}ms before checking status (attempt ${attempt + 1}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+
+          const ready = await this.checkRenditionStatus(catalogId, assetId, requestedSize);
+          if (ready) {
+            console.log('Rendition is ready!');
+            break;
+          }
+
+          if (attempt === maxRetries - 1) {
+            // On last attempt, return a 202 Accepted response with status
+            return new Response(JSON.stringify({
+              status: 'processing',
+              message: 'Rendition is still being generated. Please try again in a few moments.',
+              retryAfter: Math.floor(waitTime / 1000)
+            }), {
+              status: 202,
+              headers: {
+                'Content-Type': 'application/json',
+                'Retry-After': Math.floor(waitTime / 1000).toString()
+              }
+            });
+          }
+        }
+      }
+
+      // Fetch the rendition
       const previewResponse = await fetch(`${LIGHTROOM_API_BASE}${renditionEndpoint}`, {
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
@@ -375,75 +487,9 @@ export class LightroomClient {
         }
       });
 
-      console.log('Initial rendition response:', {
-        status: previewResponse.status,
-        statusText: previewResponse.statusText,
-        headers: Object.fromEntries(previewResponse.headers.entries())
-      });
-
       if (!previewResponse.ok) {
-        if (previewResponse.status === 404) {
-          // If rendition doesn't exist, generate it
-          console.log('Rendition not found, generating...');
-          
-          const generateEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions`;
-          console.log('Generating rendition at:', generateEndpoint, 'with size:', requestedSize);
-          
-          const generateResponse = await fetch(`${LIGHTROOM_API_BASE}${generateEndpoint}`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'x-api-key': this.apiKey,
-              'X-Lightroom-Client-Id': this.clientId,
-              'X-Generate-Renditions': requestedSize,
-              'Content-Length': '0'  // Required for empty POST body
-            }
-          });
-
-          console.log('Generation response:', {
-            status: generateResponse.status,
-            statusText: generateResponse.statusText,
-            headers: Object.fromEntries(generateResponse.headers.entries())
-          });
-
-          if (!generateResponse.ok) {
-            const errorText = await generateResponse.text();
-            console.error('Generate rendition error:', errorText);
-            throw new Error(`Failed to generate rendition: ${generateResponse.status} ${generateResponse.statusText}`);
-          }
-
-          console.log('Rendition generation requested, waiting...');
-          
-          // Wait longer for larger renditions
-          const waitTime = requestedSize === '2560' ? 5000 : 2000;
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-
-          // Try to get the rendition again
-          const retryResponse = await fetch(`${LIGHTROOM_API_BASE}${renditionEndpoint}`, {
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'x-api-key': this.apiKey,
-              'X-Lightroom-Client-Id': this.clientId,
-              'Accept': 'image/jpeg'
-            }
-          });
-
-          console.log('Retry response:', {
-            status: retryResponse.status,
-            statusText: retryResponse.statusText,
-            headers: Object.fromEntries(retryResponse.headers.entries())
-          });
-
-          if (!retryResponse.ok) {
-            const errorText = await retryResponse.text();
-            console.error('Retry get rendition error:', errorText);
-            throw new Error(`Failed to get rendition after generation: ${retryResponse.status} ${retryResponse.statusText}`);
-          }
-
-          return retryResponse;
-        }
-
-        throw new Error(`Failed to get rendition: ${previewResponse.status} ${previewResponse.statusText}`);
+        const errorText = await previewResponse.text();
+        throw new Error(`Failed to get rendition: ${previewResponse.status} ${previewResponse.statusText} - ${errorText}`);
       }
 
       return previewResponse;
