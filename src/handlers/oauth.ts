@@ -7,6 +7,13 @@ interface OAuthConfig {
   redirectUri: string;
 }
 
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+}
+
 export async function handleOAuthStart(config: OAuthConfig) {
   try {
     const state = crypto.randomUUID();
@@ -14,7 +21,7 @@ export async function handleOAuthStart(config: OAuthConfig) {
     const params = new URLSearchParams({
       client_id: config.clientId,
       redirect_uri: config.redirectUri,
-      scope: 'openid,AdobeID,lr_partner_apis',
+      scope: 'offline_access,lr_partner_apis,openid,AdobeID,lr_partner_rendition_apis',
       response_type: 'code',
       state,
       prompt: 'login consent',
@@ -47,13 +54,6 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
     const error = url.searchParams.get('error');
     const error_description = url.searchParams.get('error_description');
 
-    console.log('OAuth callback received:', {
-      code: code ? `${code.substring(0, 5)}...` : null,
-      state,
-      error,
-      error_description
-    });
-
     if (error || error_description) {
       console.error('OAuth error:', { error, error_description });
       return new Response(`OAuth error: ${error_description || error}`, { status: 400 });
@@ -72,70 +72,31 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
       redirect_uri: config.redirectUri
     });
 
-    console.log('Token request details:', {
-      url: ADOBE_TOKEN_URL,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
-      params: Object.fromEntries(params.entries()),
-      clientIdPresent: !!config.clientId,
-      clientSecretPresent: !!config.clientSecret,
-      clientIdLength: config.clientId.length,
-      clientSecretLength: config.clientSecret.length,
-      redirectUri: config.redirectUri
-    });
-
     const tokenResponse = await fetch(ADOBE_TOKEN_URL, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
+        'Content-Type': 'application/x-www-form-urlencoded'
       },
       body: params.toString()
     });
 
-    const responseText = await tokenResponse.text();
-    let responseData;
-    try {
-      responseData = JSON.parse(responseText);
-    } catch (e) {
-      responseData = responseText;
-    }
-
     if (!tokenResponse.ok) {
-      const errorDetails = {
-        status: tokenResponse.status,
-        statusText: tokenResponse.statusText,
-        headers: Object.fromEntries(tokenResponse.headers.entries()),
-        response: responseData,
-        requestParams: {
-          grant_type: 'authorization_code',
-          code: `${code.substring(0, 5)}...`,
-          redirect_uri: config.redirectUri
-        }
-      };
-      console.error('Token exchange failed:', errorDetails);
-      return new Response(`Failed to exchange code for token: ${JSON.stringify(responseData)}`, { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      const errorText = await tokenResponse.text();
+      console.error('Token exchange failed:', errorText);
+      return new Response(`Failed to exchange code for token: ${errorText}`, { status: 500 });
     }
 
-    // Store the tokens
-    if (responseData.access_token) {
-      await storage.put('access_token', responseData.access_token);
-      if (responseData.refresh_token) {
-        await storage.put('refresh_token', responseData.refresh_token);
-      }
-      return new Response('Authentication successful!', { 
-        status: 200,
-        headers: { 'Content-Type': 'text/plain' }
-      });
-    }
+    const tokens: TokenResponse = await tokenResponse.json();
+    
+    // Store both access token and refresh token
+    await storage.put('access_token', tokens.access_token);
+    await storage.put('refresh_token', tokens.refresh_token);
+    await storage.put('token_expires_at', (Date.now() + tokens.expires_in * 1000).toString());
 
-    return new Response('No access token in response', { status: 500 });
+    return new Response('Authentication successful!', { 
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' }
+    });
   } catch (error) {
     console.error('Error in handleOAuthCallback:', error);
     return new Response(`Internal Server Error: ${error.message}`, { 
@@ -146,15 +107,60 @@ export async function handleOAuthCallback(request: Request, config: OAuthConfig,
 }
 
 export async function getAccessToken(storage: KVNamespace, config: OAuthConfig): Promise<string | null> {
-  const accessToken = await storage.get('access_token');
-  if (!accessToken) {
-    console.log('No access token found');
+  try {
+    const accessToken = await storage.get('access_token');
+    const expiresAt = await storage.get('token_expires_at');
+    const refreshToken = await storage.get('refresh_token');
+
+    if (!accessToken || !expiresAt || !refreshToken) {
+      console.log('Missing token information');
+      return null;
+    }
+
+    // Check if token is expired or about to expire (5 minutes buffer)
+    if (Date.now() > parseInt(expiresAt) - 5 * 60 * 1000) {
+      console.log('Token expired or about to expire, refreshing...');
+      
+      const params = new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        refresh_token: refreshToken
+      });
+
+      const response = await fetch(ADOBE_TOKEN_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: params.toString()
+      });
+
+      if (!response.ok) {
+        console.error('Failed to refresh token');
+        return null;
+      }
+
+      const tokens: TokenResponse = await response.json();
+      
+      // Store new tokens
+      await storage.put('access_token', tokens.access_token);
+      await storage.put('refresh_token', tokens.refresh_token);
+      await storage.put('token_expires_at', (Date.now() + tokens.expires_in * 1000).toString());
+
+      return tokens.access_token;
+    }
+
+    return accessToken;
+  } catch (error) {
+    console.error('Error in getAccessToken:', error);
     return null;
   }
-  return accessToken;
 }
 
 export async function clearAccessToken(storage: KVNamespace): Promise<void> {
-  console.log('Clearing access token...');
+  console.log('Clearing OAuth tokens...');
   await storage.delete('access_token');
+  await storage.delete('refresh_token');
+  await storage.delete('token_expires_at');
 }

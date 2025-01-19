@@ -359,8 +359,11 @@ export class LightroomClient {
     }
 
     try {
+      // For fullsize, use 2560 as it's the highest quality
+      const requestedSize = size === 'fullsize' ? '2560' : size;
+      
       // Try to get the rendition
-      const renditionEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions/${size}`;
+      const renditionEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions/${requestedSize}`;
       console.log('Getting rendition from:', renditionEndpoint);
 
       const previewResponse = await fetch(`${LIGHTROOM_API_BASE}${renditionEndpoint}`, {
@@ -372,13 +375,19 @@ export class LightroomClient {
         }
       });
 
+      console.log('Initial rendition response:', {
+        status: previewResponse.status,
+        statusText: previewResponse.statusText,
+        headers: Object.fromEntries(previewResponse.headers.entries())
+      });
+
       if (!previewResponse.ok) {
         if (previewResponse.status === 404) {
           // If rendition doesn't exist, generate it
           console.log('Rendition not found, generating...');
           
           const generateEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions`;
-          console.log('Generating rendition at:', generateEndpoint);
+          console.log('Generating rendition at:', generateEndpoint, 'with size:', requestedSize);
           
           const generateResponse = await fetch(`${LIGHTROOM_API_BASE}${generateEndpoint}`, {
             method: 'POST',
@@ -386,9 +395,15 @@ export class LightroomClient {
               'Authorization': `Bearer ${this.accessToken}`,
               'x-api-key': this.apiKey,
               'X-Lightroom-Client-Id': this.clientId,
-              'X-Generate-Renditions': size,
+              'X-Generate-Renditions': requestedSize,
               'Content-Length': '0'  // Required for empty POST body
             }
+          });
+
+          console.log('Generation response:', {
+            status: generateResponse.status,
+            statusText: generateResponse.statusText,
+            headers: Object.fromEntries(generateResponse.headers.entries())
           });
 
           if (!generateResponse.ok) {
@@ -398,8 +413,10 @@ export class LightroomClient {
           }
 
           console.log('Rendition generation requested, waiting...');
-          // Wait a moment for rendition generation
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Wait longer for larger renditions
+          const waitTime = requestedSize === '2560' ? 5000 : 2000;
+          await new Promise(resolve => setTimeout(resolve, waitTime));
 
           // Try to get the rendition again
           const retryResponse = await fetch(`${LIGHTROOM_API_BASE}${renditionEndpoint}`, {
@@ -409,6 +426,12 @@ export class LightroomClient {
               'X-Lightroom-Client-Id': this.clientId,
               'Accept': 'image/jpeg'
             }
+          });
+
+          console.log('Retry response:', {
+            status: retryResponse.status,
+            statusText: retryResponse.statusText,
+            headers: Object.fromEntries(retryResponse.headers.entries())
           });
 
           if (!retryResponse.ok) {
