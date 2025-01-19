@@ -13,16 +13,47 @@ export interface LightroomCatalog {
   updated: string;
 }
 
+export interface LightroomAlbumPayload {
+  name: string;
+  order?: string;
+  userUpdated?: string;
+  userCreated?: string;
+  assetSortOrder?: 'captureDateAsc' | 'captureDateDesc' | string;
+  cover?: {
+    id: string;
+  };
+  parent?: {
+    id: string;
+  };
+  importSource?: {
+    lrcatStoreProviderId?: string;
+    lrcatAlbumId?: number;
+  };
+}
+
 export interface LightroomAlbum {
   id: string;
   name: string;
   created: string;
   updated: string;
-  type: string;
+  type: 'collection' | 'collection_set';
+  subtype: string;
+  payload: LightroomAlbumPayload;
+  parentId?: string;
   cover?: {
     id: string;
-    height: number;
-    width: number;
+    height?: number;
+    width?: number;
+  };
+  links?: {
+    self?: { href: string };
+    '/rels/album_assets'?: { href: string };
+    '/rels/cover_asset'?: { href: string };
+    '/rels/parent_album'?: { href: string };
+    '/rels/rendition_type/2048'?: { href: string };
+    '/rels/rendition_type/1280'?: { href: string };
+    '/rels/rendition_type/640'?: { href: string };
+    '/rels/rendition_type/thumbnail2x'?: { href: string };
   };
 }
 
@@ -57,6 +88,7 @@ export interface PaginationOptions {
   offset?: number;
   orderBy?: 'captureDate' | 'name' | 'updated';
   orderDirection?: 'asc' | 'desc';
+  name_after?: string;
 }
 
 export interface PaginatedResponse<T> {
@@ -237,12 +269,20 @@ export class LightroomClient {
   
     if (options.limit) params.append('limit', options.limit.toString());
     if (options.offset) params.append('offset', options.offset.toString());
+    if (options.name_after) params.append('name_after', options.name_after);
     if (options.orderBy) params.append('order_by', options.orderBy);
     if (options.orderDirection) params.append('order_direction', options.orderDirection);
   
     endpoint += params.toString();
   
+    console.log('Album request:', {
+      endpoint,
+      params: Object.fromEntries(params.entries()),
+      options
+    });
+  
     const response = await this.request(endpoint);
+    console.log('Raw albums response:', JSON.stringify(response, null, 2));
   
     if (!response.resources) {
       console.warn('No albums found in catalog:', catalogId);
@@ -256,14 +296,24 @@ export class LightroomClient {
     return {
       resources: response.resources.map((album: any) => ({
         id: album.id,
-        name: album.name || 'Untitled Album',
+        type: album.type,
+        subtype: album.subtype,
         created: album.created,
         updated: album.updated,
-        type: album.subtype,
-        cover: album.cover ? {
-          id: album.cover.id,
-          height: album.cover.height,
-          width: album.cover.width
+        links: album.links,
+        payload: {
+          name: album.payload.name,
+          order: album.payload.order,
+          userUpdated: album.payload.userUpdated,
+          userCreated: album.payload.userCreated,
+          assetSortOrder: album.payload.assetSortOrder,
+          cover: album.payload.cover,
+          parent: album.payload.parent,
+          importSource: album.payload.importSource
+        },
+        parentId: album.payload?.parent?.id,
+        cover: album.payload?.cover ? {
+          id: album.payload.cover.id
         } : undefined
       })),
       base: response.base,

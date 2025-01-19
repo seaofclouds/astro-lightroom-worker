@@ -86,6 +86,9 @@ All Lightroom API endpoints are prefixed with `/lightroom/` and support the foll
 
 #### Albums
 - `GET /lightroom/v2/catalog/albums` - List all albums
+  - Supports cursor-based pagination and sorting
+  - Returns both regular albums (`collection`) and album sets (`collection_set`)
+  - Album sets can contain other albums, creating a hierarchical structure
 - `GET /lightroom/v2/catalog/albums/{album_id}` - Get specific album details
 - `GET /lightroom/v2/catalog/albums/{album_id}/assets` - List assets in specific album
 
@@ -94,15 +97,15 @@ All Lightroom API endpoints are prefixed with `/lightroom/` and support the foll
 - `GET /lightroom/v2/catalog/albums/{album_id}/assets` - List assets in specific album
 
 #### Pagination and Sorting
-All album and asset listing endpoints support pagination and sorting through query parameters:
+Album and asset listing endpoints support pagination and sorting through query parameters:
 
 - `limit` (optional) - Number of items per page
   - Default: 20 for albums, 100 for assets
   - Example: `?limit=50`
 
-- `offset` (optional) - Number of items to skip
-  - Default: 0
-  - Example: `?offset=100`
+- `name_after` (optional) - Cursor for pagination, use the last item's name from previous page
+  - Example: `?name_after=Wedding+Photos`
+  - Note: This replaces the offset parameter for more reliable pagination
 
 - `order_by` (optional) - Field to sort by
   - Values: `captureDate`, `name`, `updated`
@@ -112,22 +115,108 @@ All album and asset listing endpoints support pagination and sorting through que
   - Values: `asc`, `desc`
   - Example: `?order_direction=desc`
 
-Example request with all parameters:
+Example request with pagination:
 ```
-GET /lightroom/v2/catalog/assets?limit=50&offset=0&order_by=captureDate&order_direction=desc
+GET /lightroom/v2/catalog/albums?limit=20&name_after=2023+Wedding&order_by=updated&order_direction=desc
 ```
 
-Response format:
+Response format includes pagination links:
 ```json
 {
-  "resources": [], // Array of albums or assets
-  "base": "string", // Base URL
+  "resources": [
+    {
+      "id": "string",
+      "type": "album",
+      "subtype": "collection | collection_set",
+      "created": "2024-01-19T00:00:00Z",
+      "updated": "2024-01-19T00:00:00Z",
+      "payload": {
+        "name": "Album Name",
+        "order": "V-1P",
+        "userUpdated": "2024-01-19T00:00:00Z",
+        "userCreated": "2024-01-19T00:00:00Z",
+        "assetSortOrder": "captureDateAsc",
+        "cover": {
+          "id": "cover_asset_id"
+        },
+        "parent": {
+          "id": "parent_album_id"
+        },
+        "importSource": {
+          "lrcatStoreProviderId": "provider_id",
+          "lrcatAlbumId": 12345
+        }
+      },
+      "links": {
+        "self": {
+          "href": "albums/album_id"
+        },
+        "/rels/album_assets": {
+          "href": "albums/album_id/assets?embed=asset"
+        },
+        "/rels/cover_asset": {
+          "href": "assets/cover_asset_id"
+        },
+        "/rels/parent_album": {
+          "href": "albums/parent_album_id"
+        },
+        "/rels/rendition_type/2048": {
+          "href": "assets/cover_asset_id/renditions/2048"
+        },
+        "/rels/rendition_type/1280": {
+          "href": "assets/cover_asset_id/renditions/1280"
+        },
+        "/rels/rendition_type/640": {
+          "href": "assets/cover_asset_id/renditions/640"
+        },
+        "/rels/rendition_type/thumbnail2x": {
+          "href": "assets/cover_asset_id/renditions/thumbnail2x"
+        }
+      }
+    }
+  ],
+  "base": "https://lr.adobe.io/v2/catalogs/{catalog_id}/",
   "links": {
-    "next": "string", // URL for next page (if available)
-    "prev": "string"  // URL for previous page (if available)
+    "next": {
+      "href": "albums?name_after=Album+Name&limit=20"  // URL for next page
+    }
   }
 }
 ```
+
+#### Collection Types and Structure
+Albums can be of two types:
+1. `collection` - Regular albums that contain assets
+   - Contains photos and videos
+   - Has optional cover image
+   - Can be nested inside a collection_set
+
+2. `collection_set` - Album sets/folders that can contain other albums
+   - Acts as a container for other albums
+   - Example: Yearly folders ("2024", "2023") containing multiple albums
+   - Can be nested (folders within folders)
+
+Album properties:
+- `id`: Unique identifier
+- `type`: Always "album"
+- `subtype`: Either "collection" or "collection_set"
+- `created`: Creation timestamp
+- `updated`: Last modification timestamp
+- `payload`:
+  - `name`: Album name
+  - `order`: Sorting order within parent
+  - `userUpdated`: Last user modification time
+  - `userCreated`: Album creation time
+  - `assetSortOrder`: How assets are sorted ("captureDateAsc", etc.)
+  - `cover`: Cover image reference
+  - `parent`: Parent album reference (for nested albums)
+  - `importSource`: Import metadata if imported
+
+The `links` object provides URLs for:
+- Accessing album assets
+- Retrieving cover image
+- Navigating to parent album
+- Getting different rendition sizes of cover image
 
 ### Admin
 - `POST /admin/credentials` - Set Adobe API credentials

@@ -214,14 +214,17 @@ export async function handleLightroomRequest(
           try {
             const paginationOptions = {
               limit: url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!) : undefined,
-              offset: url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!) : undefined,
+              name_after: url.searchParams.get('name_after') || undefined,
               orderBy: url.searchParams.get('order_by') as 'captureDate' | 'name' | 'updated' | undefined,
               orderDirection: url.searchParams.get('order_direction') as 'asc' | 'desc' | undefined
             };
             
             const assets = await authenticatedClient.getAssets(catalogId, albumId, paginationOptions);
             return new Response(JSON.stringify(assets), {
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'Cache-Control': 'public, max-age=300' // Cache for 5 minutes
+              },
             });
           } catch (error) {
             console.error('Error fetching album assets:', error);
@@ -235,14 +238,17 @@ export async function handleLightroomRequest(
           try {
             const paginationOptions = {
               limit: url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!) : undefined,
-              offset: url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!) : undefined,
+              name_after: url.searchParams.get('name_after') || undefined,
               orderBy: url.searchParams.get('order_by') as 'captureDate' | 'name' | 'updated' | undefined,
               orderDirection: url.searchParams.get('order_direction') as 'asc' | 'desc' | undefined
             };
             
             const albums = await authenticatedClient.getAlbums(catalogId, paginationOptions);
             return new Response(JSON.stringify(albums), {
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'Cache-Control': 'public, max-age=300' // Cache for 5 minutes
+              },
             });
           } catch (error) {
             console.error('Error fetching albums:', error);
