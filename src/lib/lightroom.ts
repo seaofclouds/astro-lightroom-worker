@@ -85,10 +85,9 @@ export interface LightroomAsset {
 // Pagination interfaces
 export interface PaginationOptions {
   limit?: number;
-  offset?: number;
-  orderBy?: 'captureDate' | 'name' | 'updated';
-  orderDirection?: 'asc' | 'desc';
   name_after?: string;
+  order?: 'name' | 'created' | 'updated';  // Field to sort by
+  order_by?: 'asc' | 'desc';  // Sort direction
 }
 
 export interface PaginatedResponse<T> {
@@ -268,10 +267,9 @@ export class LightroomClient {
     const params = new URLSearchParams();
   
     if (options.limit) params.append('limit', options.limit.toString());
-    if (options.offset) params.append('offset', options.offset.toString());
     if (options.name_after) params.append('name_after', options.name_after);
-    if (options.orderBy) params.append('order_by', options.orderBy);
-    if (options.orderDirection) params.append('order_direction', options.orderDirection);
+    if (options.order) params.append('order', options.order);
+    if (options.order_by) params.append('order_by', options.order_by);
   
     endpoint += params.toString();
   
@@ -337,9 +335,8 @@ export class LightroomClient {
     const params = new URLSearchParams();
   
     if (options.limit) params.append('limit', options.limit.toString());
-    if (options.offset) params.append('offset', options.offset.toString());
-    if (options.orderBy) params.append('order_by', options.orderBy);
-    if (options.orderDirection) params.append('order_direction', options.orderDirection);
+    if (options.order) params.append('order', options.order);
+    if (options.order_by) params.append('order_by', options.order_by);
   
     endpoint += params.toString();
 

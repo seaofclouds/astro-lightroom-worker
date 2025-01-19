@@ -107,17 +107,29 @@ Album and asset listing endpoints support pagination and sorting through query p
   - Example: `?name_after=Wedding+Photos`
   - Note: This replaces the offset parameter for more reliable pagination
 
-- `order_by` (optional) - Field to sort by
-  - Values: `captureDate`, `name`, `updated`
-  - Example: `?order_by=captureDate`
+##### Album Sorting
+For albums, the following sort options are available:
+- `order` (optional) - Field to sort by
+  - Values: `name`, `created`, `updated`
+  - Example: `?order=updated`
 
-- `order_direction` (optional) - Sort direction
+- `order_by` (optional) - Sort direction
   - Values: `asc`, `desc`
-  - Example: `?order_direction=desc`
+  - Example: `?order_by=desc`
 
-Example request with pagination:
+##### Asset Sorting
+For assets within albums, additional sort options are available:
+- `order` (optional) - Field to sort by
+  - Values: `captureDate`, `name`, `updated`
+  - Example: `?order=captureDate`
+
+Example requests:
 ```
-GET /lightroom/v2/catalog/albums?limit=20&name_after=2023+Wedding&order_by=updated&order_direction=desc
+# Sort albums by creation date, newest first
+GET /lightroom/v2/catalog/albums?limit=20&order=created&order_by=desc
+
+# Sort assets by capture date, newest first
+GET /lightroom/v2/catalog/albums/{album_id}/assets?limit=100&order=captureDate&order_by=desc
 ```
 
 Response format includes pagination links:
