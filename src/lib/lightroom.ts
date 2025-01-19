@@ -18,6 +18,7 @@ export interface LightroomAlbum {
   name: string;
   created: string;
   updated: string;
+  type: string;
   cover?: {
     id: string;
     height: number;
@@ -48,6 +49,24 @@ export interface LightroomAsset {
     fullsize?: string;
     "2048"?: string;
   };
+}
+
+// Pagination interfaces
+export interface PaginationOptions {
+  limit?: number;
+  offset?: number;
+  orderBy?: 'captureDate' | 'name' | 'updated';
+  orderDirection?: 'asc' | 'desc';
+}
+
+export interface PaginatedResponse<T> {
+  resources: T[];
+  base: string;
+  links: {
+    next?: string;
+    prev?: string;
+  };
+  errors?: any[];
 }
 
 export class LightroomClient {
@@ -205,105 +224,104 @@ export class LightroomClient {
     };
   }
 
-  async getAlbums(catalogId: string): Promise<LightroomAlbum[]> {
+  async getAlbums(
+    catalogId: string,
+    options: PaginationOptions = {}
+  ): Promise<PaginatedResponse<LightroomAlbum>> {
     if (!this.accountId) {
       throw new Error('Account ID is required to get albums');
     }
 
-    const response = await this.request(`/v2/catalogs/${catalogId}/albums`);
-    
+    let endpoint = `/v2/catalogs/${catalogId}/albums?`;
+    const params = new URLSearchParams();
+  
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.offset) params.append('offset', options.offset.toString());
+    if (options.orderBy) params.append('order_by', options.orderBy);
+    if (options.orderDirection) params.append('order_direction', options.orderDirection);
+  
+    endpoint += params.toString();
+  
+    const response = await this.request(endpoint);
+  
     if (!response.resources) {
       console.warn('No albums found in catalog:', catalogId);
-      return [];
+      return {
+        resources: [],
+        base: response.base,
+        links: response.links || {}
+      };
     }
 
-    return response.resources.map((album: any) => ({
-      id: album.id,
-      name: album.name || 'Untitled Album',
-      created: album.created,
-      updated: album.updated,
-      type: album.subtype
-    }));
+    return {
+      resources: response.resources.map((album: any) => ({
+        id: album.id,
+        name: album.name || 'Untitled Album',
+        created: album.created,
+        updated: album.updated,
+        type: album.subtype,
+        cover: album.cover ? {
+          id: album.cover.id,
+          height: album.cover.height,
+          width: album.cover.width
+        } : undefined
+      })),
+      base: response.base,
+      links: response.links || {}
+    };
   }
 
   async getAssets(
     catalogId: string, 
     albumId?: string,
-    options: { limit?: number; offset?: number } = {}
-  ): Promise<LightroomAsset[]> {
+    options: PaginationOptions = {}
+  ): Promise<PaginatedResponse<LightroomAsset>> {
     if (!this.accountId) {
       throw new Error('Account ID is required to get assets');
     }
 
-    let endpoint = `/v2/catalogs/${catalogId}/assets`;
-    if (albumId) {
-      endpoint = `/v2/catalogs/${catalogId}/albums/${albumId}/assets`;
-    }
-
-    if (options.limit) {
-      endpoint += `?limit=${options.limit}`;
-    }
-    if (options.offset) {
-      endpoint += `&offset=${options.offset}`;
-    }
+    let endpoint = albumId 
+      ? `/v2/catalogs/${catalogId}/albums/${albumId}/assets?`
+      : `/v2/catalogs/${catalogId}/assets?`;
+  
+    const params = new URLSearchParams();
+  
+    if (options.limit) params.append('limit', options.limit.toString());
+    if (options.offset) params.append('offset', options.offset.toString());
+    if (options.orderBy) params.append('order_by', options.orderBy);
+    if (options.orderDirection) params.append('order_direction', options.orderDirection);
+  
+    endpoint += params.toString();
 
     console.log('Making request to:', endpoint);
     const response = await this.request(endpoint);
     console.log('Raw Adobe API response:', JSON.stringify(response, null, 2));
-    
+
     if (!response.resources) {
-      console.warn('No assets found');
-      return [];
-    }
-
-    // Check if we have the expected links structure
-    if (response.resources[0]) {
-      console.log('First asset _links:', JSON.stringify(response.resources[0]._links, null, 2));
-      console.log('First asset full structure:', JSON.stringify(response.resources[0], null, 2));
-    }
-
-    return response.resources.map((asset: any) => {
-      const assetBase = {
-        id: asset.id,
-        created: asset.created,
-        updated: asset.updated,
-        subtype: asset.subtype || 'image',
-        name: asset.payload?.importSource?.fileName || asset.payload?.name || asset.name || 'Untitled Asset',
-        size: asset.payload?.importSource?.fileSize || asset.payload?.fileSize || 0,
-        type: asset.payload?.importSource?.mimeType || asset.payload?.type || 'image/jpeg',
-        metadata: {
-          dimensions: asset.payload?.develop?.croppedDimensions || {
-            width: asset.payload?.width || 0,
-            height: asset.payload?.height || 0
-          },
-          location: asset.payload?.develop?.userMetadata?.location || asset.payload?.location
-        }
+      return {
+        resources: [],
+        base: response.base,
+        links: response.links || {}
       };
+    }
 
-      // Add rendition URLs if we have _links
-      if (asset._links) {
-        const renditions: Record<string, string> = {};
-        const renditionBase = `/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions`;
-        
-        // Add standard rendition sizes
-        renditions['thumbnail2x'] = `${renditionBase}/thumbnail2x`;
-        renditions['2048'] = `${renditionBase}/2048`;
-
-        // Find the largest available rendition for fullsize
-        const sizeKeys = Object.keys(asset._links).filter(key => /^\d+$/.test(key));
-        if (sizeKeys.length > 0) {
-          const maxSize = Math.max(...sizeKeys.map(k => parseInt(k)));
-          renditions['fullsize'] = `${renditionBase}/${maxSize}`;
+    return {
+      resources: response.resources.map((asset: any) => ({
+        id: asset.id,
+        name: asset.payload.name || asset.payload.importSource.fileName || 'Untitled',
+        size: asset.payload.importSource.fileSize,
+        type: asset.payload.importSource.fileFormat,
+        subtype: asset.subtype,
+        created: asset.payload.captureDate || asset.payload.importSource.importedOnDevice,
+        updated: asset.updated,
+        metadata: {
+          dimensions: asset.payload.develop?.croppedDimensions || asset.payload.develop?.dimensions,
+          location: asset.payload.develop?.userMetadata?.location
         }
-
-        return {
-          ...assetBase,
-          renditions
-        };
-      }
-
-      return assetBase;
-    });
+      })),
+      base: response.base,
+      links: response.links || {}
+    };
   }
 
   async getAsset(

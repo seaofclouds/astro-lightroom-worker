@@ -212,7 +212,14 @@ export async function handleLightroomRequest(
         if (albumId) {
           // Handle /catalogs/{catalog_id}/albums/{album_id}
           try {
-            const assets = await authenticatedClient.getAssets(catalogId, albumId);
+            const paginationOptions = {
+              limit: url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!) : undefined,
+              offset: url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!) : undefined,
+              orderBy: url.searchParams.get('order_by') as 'captureDate' | 'name' | 'updated' | undefined,
+              orderDirection: url.searchParams.get('order_direction') as 'asc' | 'desc' | undefined
+            };
+            
+            const assets = await authenticatedClient.getAssets(catalogId, albumId, paginationOptions);
             return new Response(JSON.stringify(assets), {
               headers: { 'Content-Type': 'application/json' },
             });
@@ -226,7 +233,14 @@ export async function handleLightroomRequest(
         } else {
           // Handle /catalogs/{catalog_id}/albums
           try {
-            const albums = await authenticatedClient.getAlbums(catalogId);
+            const paginationOptions = {
+              limit: url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!) : undefined,
+              offset: url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!) : undefined,
+              orderBy: url.searchParams.get('order_by') as 'captureDate' | 'name' | 'updated' | undefined,
+              orderDirection: url.searchParams.get('order_direction') as 'asc' | 'desc' | undefined
+            };
+            
+            const albums = await authenticatedClient.getAlbums(catalogId, paginationOptions);
             return new Response(JSON.stringify(albums), {
               headers: { 'Content-Type': 'application/json' },
             });
@@ -243,12 +257,14 @@ export async function handleLightroomRequest(
       // Handle /catalogs/{catalog_id}/assets
       if (segments[2] === 'assets') {
         try {
-          const limit = url.searchParams.get('limit');
-          const offset = url.searchParams.get('offset');
-          const assets = await authenticatedClient.getAssets(catalogId, undefined, {
-            limit: limit ? parseInt(limit) : undefined,
-            offset: offset ? parseInt(offset) : undefined,
-          });
+          const paginationOptions = {
+            limit: url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!) : undefined,
+            offset: url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!) : undefined,
+            orderBy: url.searchParams.get('order_by') as 'captureDate' | 'name' | 'updated' | undefined,
+            orderDirection: url.searchParams.get('order_direction') as 'asc' | 'desc' | undefined
+          };
+          
+          const assets = await authenticatedClient.getAssets(catalogId, undefined, paginationOptions);
           return new Response(JSON.stringify(assets), {
             headers: { 'Content-Type': 'application/json' },
           });
