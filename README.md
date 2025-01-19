@@ -87,12 +87,47 @@ All Lightroom API endpoints are prefixed with `/lightroom/` and support the foll
 #### Albums
 - `GET /lightroom/v2/catalog/albums` - List all albums
 - `GET /lightroom/v2/catalog/albums/{album_id}` - Get specific album details
+- `GET /lightroom/v2/catalog/albums/{album_id}/assets` - List assets in specific album
 
 #### Assets
 - `GET /lightroom/v2/catalog/assets` - List all assets
 - `GET /lightroom/v2/catalog/albums/{album_id}/assets` - List assets in specific album
 
-Note: API endpoints currently have a limit of approximately 100 items per request. Pagination support is planned for future updates.
+#### Pagination and Sorting
+All album and asset listing endpoints support pagination and sorting through query parameters:
+
+- `limit` (optional) - Number of items per page
+  - Default: 20 for albums, 100 for assets
+  - Example: `?limit=50`
+
+- `offset` (optional) - Number of items to skip
+  - Default: 0
+  - Example: `?offset=100`
+
+- `order_by` (optional) - Field to sort by
+  - Values: `captureDate`, `name`, `updated`
+  - Example: `?order_by=captureDate`
+
+- `order_direction` (optional) - Sort direction
+  - Values: `asc`, `desc`
+  - Example: `?order_direction=desc`
+
+Example request with all parameters:
+```
+GET /lightroom/v2/catalog/assets?limit=50&offset=0&order_by=captureDate&order_direction=desc
+```
+
+Response format:
+```json
+{
+  "resources": [], // Array of albums or assets
+  "base": "string", // Base URL
+  "links": {
+    "next": "string", // URL for next page (if available)
+    "prev": "string"  // URL for previous page (if available)
+  }
+}
+```
 
 ### Admin
 - `POST /admin/credentials` - Set Adobe API credentials
