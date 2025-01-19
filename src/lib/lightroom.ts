@@ -54,7 +54,8 @@ export class LightroomClient {
   constructor(
     private readonly accessToken: string,
     private readonly accountId?: string,
-    private readonly apiKey?: string
+    private readonly apiKey?: string,
+    private readonly clientId?: string
   ) {}
 
   private async request(endpoint: string, options: RequestInit = {}) {
@@ -139,6 +140,12 @@ export class LightroomClient {
       name: response.full_name,
       type: response.type
     }];
+  }
+
+  async listCatalogs(): Promise<any> {
+    console.log('Listing catalogs...');
+    const response = await this.request('/v2/catalog');
+    return response;
   }
 
   async getCatalogs(): Promise<LightroomCatalog[]> {
@@ -233,11 +240,8 @@ export class LightroomClient {
       endpoint = `/v2/catalogs/${catalogId}/albums/${albumId}/assets`;
     }
 
-    // Add account_id as a query parameter
-    endpoint += `?account_id=${this.accountId}`;
-
     if (options.limit) {
-      endpoint += `&limit=${options.limit}`;
+      endpoint += `?limit=${options.limit}`;
     }
     if (options.offset) {
       endpoint += `&offset=${options.offset}`;
@@ -279,7 +283,7 @@ export class LightroomClient {
       // Add rendition URLs if we have _links
       if (asset._links) {
         const renditions: Record<string, string> = {};
-        const renditionBase = `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions`;
+        const renditionBase = `/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions`;
         
         // Add standard rendition sizes
         renditions['thumbnail2x'] = `${renditionBase}/thumbnail2x`;
@@ -310,7 +314,7 @@ export class LightroomClient {
       throw new Error('Account ID is required to get asset');
     }
 
-    const endpoint = `/v2/catalogs/${catalogId}/assets/${assetId}?account_id=${this.accountId}`;
+    const endpoint = `/v2/catalogs/${catalogId}/assets/${assetId}`;
     console.log('Getting single asset from:', endpoint);
     
     const response = await this.request(endpoint);
@@ -338,9 +342,9 @@ export class LightroomClient {
       },
       // Always include rendition URLs for single asset view
       renditions: {
-        thumbnail2x: `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/thumbnail2x`,
-        '2048': `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/2048`,
-        fullsize: `/api/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/2048`
+        thumbnail2x: `/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/thumbnail2x`,
+        '2048': `/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/2048`,
+        fullsize: `/lightroom/catalogs/${catalogId}/assets/${asset.id}/renditions/2048`
       }
     };
   }
@@ -348,60 +352,75 @@ export class LightroomClient {
   async getAssetPreview(
     catalogId: string,
     assetId: string,
-    size: '2048' | 'thumbnail2x' | string
+    size: 'thumbnail2x' | 'fullsize' | '640' | '1280' | '2048' | '2560' = '2048'
   ): Promise<Response> {
-    if (!this.accountId) {
-      throw new Error('Account ID is required to get asset previews');
+    if (!this.accessToken || !this.apiKey) {
+      throw new Error('Access token and API key are required');
     }
 
-    // First get the asset details
-    const assetEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}?account_id=${this.accountId}`;
-    console.log('Getting asset details from:', assetEndpoint);
-    
-    const assetResponse = await this.request(assetEndpoint);
-    console.log('Asset response:', JSON.stringify(assetResponse, null, 2));
-
-    // Use previews endpoint instead of renditions
-    const previewEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/previews/${size}?account_id=${this.accountId}`;
-    console.log('Getting preview from:', previewEndpoint);
-
     try {
-      const previewResponse = await fetch(`${LIGHTROOM_API_BASE}${previewEndpoint}`, {
+      // Try to get the rendition
+      const renditionEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions/${size}`;
+      console.log('Getting rendition from:', renditionEndpoint);
+
+      const previewResponse = await fetch(`${LIGHTROOM_API_BASE}${renditionEndpoint}`, {
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
-          'x-api-key': this.apiKey!,
-          'X-Lightroom-Account-Id': this.accountId,
-          'Accept': 'image/*'
+          'x-api-key': this.apiKey,
+          'X-Lightroom-Client-Id': this.clientId,
+          'Accept': 'image/jpeg'
         }
       });
 
       if (!previewResponse.ok) {
-        // If preview doesn't exist, try to create it
-        console.log('Preview GET failed, trying POST');
-        const createPreviewResponse = await fetch(`${LIGHTROOM_API_BASE}${previewEndpoint}`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'x-api-key': this.apiKey!,
-            'X-Lightroom-Account-Id': this.accountId,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({})
-        });
+        if (previewResponse.status === 404) {
+          // If rendition doesn't exist, generate it
+          console.log('Rendition not found, generating...');
+          
+          const generateEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/renditions`;
+          console.log('Generating rendition at:', generateEndpoint);
+          
+          const generateResponse = await fetch(`${LIGHTROOM_API_BASE}${generateEndpoint}`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'x-api-key': this.apiKey,
+              'X-Lightroom-Client-Id': this.clientId,
+              'X-Generate-Renditions': size,
+              'Content-Length': '0'  // Required for empty POST body
+            }
+          });
 
-        if (!createPreviewResponse.ok) {
-          throw new Error(`Failed to create preview: ${createPreviewResponse.status} ${createPreviewResponse.statusText}`);
+          if (!generateResponse.ok) {
+            const errorText = await generateResponse.text();
+            console.error('Generate rendition error:', errorText);
+            throw new Error(`Failed to generate rendition: ${generateResponse.status} ${generateResponse.statusText}`);
+          }
+
+          console.log('Rendition generation requested, waiting...');
+          // Wait a moment for rendition generation
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          // Try to get the rendition again
+          const retryResponse = await fetch(`${LIGHTROOM_API_BASE}${renditionEndpoint}`, {
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'x-api-key': this.apiKey,
+              'X-Lightroom-Client-Id': this.clientId,
+              'Accept': 'image/jpeg'
+            }
+          });
+
+          if (!retryResponse.ok) {
+            const errorText = await retryResponse.text();
+            console.error('Retry get rendition error:', errorText);
+            throw new Error(`Failed to get rendition after generation: ${retryResponse.status} ${retryResponse.statusText}`);
+          }
+
+          return retryResponse;
         }
 
-        // After creating, try to get it again
-        return await fetch(`${LIGHTROOM_API_BASE}${previewEndpoint}`, {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'x-api-key': this.apiKey!,
-            'X-Lightroom-Account-Id': this.accountId,
-            'Accept': 'image/*'
-          }
-        });
+        throw new Error(`Failed to get rendition: ${previewResponse.status} ${previewResponse.statusText}`);
       }
 
       return previewResponse;
@@ -424,7 +443,7 @@ export class LightroomClient {
 
     // Step 1: Generate upload target
     const targetResponse = await this.request(
-      `/v2/catalogs/${catalogId}/assets?account_id=${this.accountId}`,
+      `/v2/catalogs/${catalogId}/assets`,
       {
         method: 'POST',
         headers: {

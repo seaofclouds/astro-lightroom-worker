@@ -16,7 +16,7 @@ export async function handleLightroomRequest(
     const url = new URL(request.url);
     // Use clientId as API key
     const client = new LightroomClient(accessToken, undefined, config.clientId);
-    const path = url.pathname.replace('/api/lightroom', '');
+    const path = url.pathname.replace('/lightroom', '');
 
     console.log('Lightroom request:', {
       path,
@@ -69,10 +69,10 @@ export async function handleLightroomRequest(
         }
       }
 
-      // Handle /catalogs/{catalog_id}/assets/{asset_id}/previews/{size}
-      if (segments[2] === 'assets' && segments[3] && segments[4] === 'previews' && segments[5]) {
+      // Handle /catalogs/{catalog_id}/assets/{asset_id}/preview
+      if (segments[2] === 'assets' && segments[3] && segments[4] === 'preview') {
         const assetId = segments[3];
-        const size = segments[5];
+        const size = url.searchParams.get('size') || '2048';
         
         try {
           console.log(`Fetching preview for asset ${assetId}, size ${size}`);
@@ -109,6 +109,47 @@ export async function handleLightroomRequest(
         }
       }
 
+      // Handle /catalogs/{catalog_id}/assets/{asset_id}/preview/develop
+      if (segments[2] === 'assets' && segments[3] && segments[4] === 'preview' && segments[5] === 'develop') {
+        const assetId = segments[3];
+        
+        try {
+          console.log(`Generating preview for asset ${assetId}`);
+          const developEndpoint = `/v2/catalogs/${catalogId}/assets/${assetId}/preview/develop?account_id=${authenticatedClient.accountId}`;
+          
+          const developResponse = await fetch(`${LIGHTROOM_API_BASE}${developEndpoint}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${authenticatedClient.accessToken}`,
+              'x-api-key': authenticatedClient.apiKey!,
+              'X-Lightroom-Account-Id': authenticatedClient.accountId!,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({})
+          });
+
+          if (!developResponse.ok) {
+            const errorText = await developResponse.text();
+            console.error('Develop error:', errorText);
+            return new Response(errorText, {
+              status: developResponse.status,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+
+          return new Response(JSON.stringify({ status: 'ok' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } catch (error) {
+          console.error('Error generating preview:', error);
+          return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
       // Handle /catalogs/{catalog_id}/assets/{asset_id}/renditions/{size}
       if (segments[2] === 'assets' && segments[3] && segments[4] === 'renditions' && segments[5]) {
         const assetId = segments[3];
@@ -116,7 +157,7 @@ export async function handleLightroomRequest(
         
         try {
           console.log(`Fetching rendition for asset ${assetId}, size ${size}`);
-          const rendition = await authenticatedClient.getAssetRendition(catalogId, assetId, size);
+          const rendition = await authenticatedClient.getAssetPreview(catalogId, assetId, size);
           
           // Get the content type from the response
           const contentType = rendition.headers.get('content-type');

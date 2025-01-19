@@ -153,3 +153,8 @@ export async function getAccessToken(storage: KVNamespace, config: OAuthConfig):
   }
   return accessToken;
 }
+
+export async function clearAccessToken(storage: KVNamespace): Promise<void> {
+  console.log('Clearing access token...');
+  await storage.delete('access_token');
+}

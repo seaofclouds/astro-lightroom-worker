@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { handleOAuthStart, handleOAuthCallback, getAccessToken } from './handlers/oauth';
+import { handleOAuthStart, handleOAuthCallback, getAccessToken, clearAccessToken } from './handlers/oauth';
 import { handleLightroomRequest } from './handlers/lightroom';
 
 interface Env {
@@ -63,18 +63,23 @@ app.post('/admin/credentials', async (c) => {
 });
 
 // OAuth endpoints
-app.get('/auth/start', async (c) => {
+app.get('/lightroom/auth/start', async (c) => {
   const config = await getAdobeCredentials(c.env, false);
   return handleOAuthStart(config);
 });
 
-app.get('/auth/callback', async (c) => {
+app.get('/lightroom/auth/callback', async (c) => {
   const config = await getAdobeCredentials(c.env, false);
   return handleOAuthCallback(c.req, config, c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
 });
 
+app.get('/lightroom/auth/clear', async (c) => {
+  await clearAccessToken(c.env['lightroom-worker-ADOBE_OAUTH_TOKENS']);
+  return new Response('Token cleared', { status: 200 });
+});
+
 // Lightroom API endpoints
-app.all('/api/lightroom/*', async (c) => {
+app.all('/lightroom/*', async (c) => {
   try {
     const config = await getAdobeCredentials(c.env, true);
     return handleLightroomRequest(
