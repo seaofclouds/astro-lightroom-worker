@@ -6,9 +6,9 @@ A Cloudflare Worker application that integrates with Adobe Lightroom API to mana
 
 - OAuth2 authentication with Adobe's API
 - Fetch albums and catalogs from Lightroom
-- Upload photos to Lightroom
-- Manage photo metadata
-- Portfolio organization and management
+- List and manage assets within albums
+- Secure token storage using Cloudflare KV
+- Proper error handling and logging
 
 ## Setup
 
@@ -70,19 +70,49 @@ npm run dev
 
 ## API Endpoints
 
+### System
+- `GET /health` - Health check endpoint
+
 ### Authentication
-- `GET /auth/start` - Start OAuth flow
-- `GET /auth/callback` - OAuth callback handler
+- `GET /lightroom/auth/start` - Start OAuth flow
+- `GET /lightroom/auth/callback` - OAuth callback handler
+- `GET /lightroom/auth/clear` - Clear stored OAuth tokens
 
 ### Lightroom API
-- `GET /api/lightroom/accounts` - List all accounts
-- `GET /api/lightroom/catalogs` - List all catalogs
-- `GET /api/lightroom/albums` - List albums in a catalog
-- `GET /api/lightroom/assets` - List assets in a catalog or album
-- `POST /api/lightroom/upload` - Upload new assets
+All Lightroom API endpoints are prefixed with `/lightroom/` and support the following operations:
+
+#### Catalogs
+- `GET /lightroom/v2/catalog` - Get user catalog information
+
+#### Albums
+- `GET /lightroom/v2/catalog/albums` - List all albums
+- `GET /lightroom/v2/catalog/albums/{album_id}` - Get specific album details
+
+#### Assets
+- `GET /lightroom/v2/catalog/assets` - List all assets
+- `GET /lightroom/v2/catalog/albums/{album_id}/assets` - List assets in specific album
+
+Note: API endpoints currently have a limit of approximately 100 items per request. Pagination support is planned for future updates.
+
+### Admin
+- `POST /admin/credentials` - Set Adobe API credentials
 
 ## Security Notes
 
 - Never commit API keys or secrets to version control
 - Always use environment variables or secrets management for sensitive data
 - The `.dev.vars` file is ignored by git for local development security
+
+## Known Limitations
+
+- Asset and album listings are currently limited to approximately 100 items per request
+- Pagination support is under development
+- Write operations (create/update/delete) require additional security measures
+
+## Future Enhancements
+
+- Pagination support for albums and assets
+- Enhanced security measures including API key authentication
+- Support for asset metadata management
+- Album creation and management
+- Photo filtering and sorting capabilities
