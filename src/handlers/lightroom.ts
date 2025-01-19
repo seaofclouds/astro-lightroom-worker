@@ -151,42 +151,57 @@ export async function handleLightroomRequest(
       }
 
       // Handle /catalogs/{catalog_id}/assets/{asset_id}/renditions/{size}
-      if (segments[2] === 'assets' && segments[3] && segments[4] === 'renditions' && segments[5]) {
-        const assetId = segments[3];
-        const size = segments[5];
+      if ((segments[2] === 'assets' || segments[2] === 'albums') && segments[3]) {
+        let assetId = segments[3];
         
-        try {
-          console.log(`Fetching rendition for asset ${assetId}, size ${size}`);
-          const rendition = await authenticatedClient.getAssetPreview(catalogId, assetId, size);
-          
-          // Get the content type from the response
-          const contentType = rendition.headers.get('content-type');
-          console.log('Rendition content type:', contentType);
+        // If this is an album path, extract the actual asset ID
+        if (segments[2] === 'albums') {
+          const albumId = segments[3];
+          // Check if we have an asset ID in the path
+          if (segments[4] === 'assets' && segments[5]) {
+            assetId = segments[5];
+          } else {
+            return new Response('Invalid album asset path', { status: 400 });
+          }
+        }
 
-          // If it's JSON, it might be an error response
-          if (contentType?.includes('application/json')) {
-            const errorText = await rendition.text();
-            console.error('Rendition error:', errorText);
-            return new Response(errorText, {
-              status: rendition.status,
-              headers: { 'Content-Type': 'application/json' }
+        // Handle rendition requests
+        if (segments[segments[2] === 'albums' ? 6 : 4] === 'renditions') {
+          const size = segments[segments[2] === 'albums' ? 7 : 5] || 'fullsize';
+          
+          try {
+            console.log(`Fetching rendition for asset ${assetId}, size ${size}`);
+            const preview = await authenticatedClient.getAssetPreview(catalogId, assetId, size);
+            
+            // Get the content type from the response
+            const contentType = preview.headers.get('content-type');
+            console.log('Rendition content type:', contentType);
+
+            // If it's JSON, it might be an error response
+            if (contentType?.includes('application/json')) {
+              const errorText = await preview.text();
+              console.error('Rendition error:', errorText);
+              return new Response(errorText, {
+                status: preview.status,
+                headers: { 'Content-Type': 'application/json' }
+              });
+            }
+
+            // Otherwise, stream the image response
+            return new Response(preview.body, {
+              status: preview.status,
+              headers: {
+                'Content-Type': contentType || 'image/jpeg',
+                'Cache-Control': 'public, max-age=31536000'
+              }
+            });
+          } catch (error) {
+            console.error('Error fetching rendition:', error);
+            return new Response(JSON.stringify({ error: error.message }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
             });
           }
-
-          // Otherwise, stream the image response
-          return new Response(rendition.body, {
-            status: rendition.status,
-            headers: {
-              'Content-Type': contentType || 'image/jpeg',
-              'Cache-Control': 'public, max-age=31536000'
-            }
-          });
-        } catch (error) {
-          console.error('Error fetching rendition:', error);
-          return new Response(JSON.stringify({ error: error.message }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-          });
         }
       }
 
